@@ -8,47 +8,87 @@
 </head>
 <body>
   <main>
-    <header><span class="mark">▶</span><div><h1>多窗口网页播放器</h1><p>每个网址打开为独立窗口</p></div></header>
-    <section class="current-actions">
-      <button class="secondary" id="theater-current">铺满当前网页播放器</button>
-      <button class="plain" id="restore-current">还原</button>
-    </section>
+    <header>
+      <span class="mark">▶</span>
+      <div class="titles">
+        <h1>多窗口网页播放器</h1>
+        <p>每个网址打开为独立窗口，并自动平铺成播放网格</p>
+      </div>
+      <span class="badge">控制中心</span>
+    </header>
+
     <div class="install-notice" id="install-notice" hidden>
       当前页面是从本地文件直接打开的，无法取得浏览器扩展权限。请在扩展管理页加载整个 <code>web-player-windows</code> 文件夹后，从浏览器工具栏打开本面板。
     </div>
-    <label for="urls">视频网页网址</label>
-    <textarea id="urls" rows="7" placeholder="每行一个网页地址&#10;https://www.pearvideo.com/video_1804093"></textarea>
-    <p class="hint">窗口会按屏幕网格排列；每页的主播放器会自动铺满所属窗口。</p>
-    <button class="primary" id="open-windows">打开独立播放器窗口</button>
-    <button class="import-button" id="import-tabs">导入当前浏览器窗口的标签</button>
-    <section class="import-section" id="import-section" hidden>
-      <div class="group-heading"><strong>选择要打开的标签</strong><span id="import-count">0 个</span></div>
-      <div id="import-list"></div>
-      <div class="import-actions"><button class="plain" id="cancel-import">取消</button><button class="secondary" id="open-selected">移入独立窗口</button></div>
-    </section>
-    <section class="playlist-section" aria-label="播放列表">
-      <div class="group-heading"><strong>播放列表</strong><button class="refresh" id="clear-playlist">清空</button></div>
-      <ul id="playlist-list"><li class="empty-list">右键网页或链接即可加入。</li></ul>
-      <button class="secondary open-playlist" id="open-playlist">打开播放列表</button>
-    </section>
-    <section class="control-bar-setting" aria-label="悬浮控制条设置">
-      <div><strong>窗口悬浮控制条</strong><p>默认显示；按住 Ctrl 操作可同步全部窗口。</p></div>
-      <button class="plain" id="toggle-floating-controls">隐藏</button>
-    </section>
-    <section class="group-controls" aria-label="统一控制">
-      <div class="group-heading"><strong>统一控制</strong><span id="session-count">暂无窗口</span></div>
-      <div class="group-actions"><button class="secondary" id="play-all">▶ 全部播放</button><button class="secondary" id="pause-all">Ⅱ 全部暂停</button></div>
-      <label class="progress-label" for="master-seek">同步进度 <span id="progress-value">0%</span></label>
-      <input id="master-seek" type="range" min="0" max="100" value="0" aria-label="将所有视频跳转到相同百分比">
-      <p class="progress-note">拖动后，所有可识别视频会跳转到各自时长的相同百分比。</p>
-    </section>
-    <section class="session-section" aria-label="已打开的视频窗口">
-      <div class="group-heading"><strong>已打开窗口</strong><button class="refresh" id="refresh-sessions">刷新</button></div>
-      <ul id="session-list"><li class="empty-list">尚未打开视频网页。</li></ul>
-      <button class="secondary show-grid" id="show-player-grid">返回播放网格</button>
-    </section>
+
+    <div class="columns">
+      <div class="col">
+        <section class="card" aria-label="添加视频网页">
+          <div class="group-heading"><strong>添加视频网页</strong></div>
+          <label for="urls">视频网页网址</label>
+          <textarea id="urls" rows="6" placeholder="每行一个网页地址&#10;https://www.pearvideo.com/video_1804093"></textarea>
+          <p class="hint">窗口会按屏幕网格排列；每页的主播放器会自动铺满所属窗口。</p>
+          <button class="primary" id="open-windows">打开独立播放器窗口</button>
+          <button class="import-button" id="import-tabs">导入当前浏览器窗口的标签</button>
+        </section>
+
+        <section class="card import-section" id="import-section" hidden>
+          <div class="group-heading"><strong>选择要打开的标签</strong><span id="import-count">0 个</span></div>
+          <div id="import-list"></div>
+          <div class="import-actions">
+            <button class="plain" id="cancel-import">取消</button>
+            <button class="secondary" id="open-selected">移入独立窗口</button>
+          </div>
+        </section>
+
+        <section class="card card--grow playlist-section" aria-label="播放列表">
+          <div class="group-heading"><strong>播放列表</strong><button class="refresh" id="clear-playlist">清空</button></div>
+          <ul id="playlist-list"><li class="empty-list">右键网页或链接即可加入。</li></ul>
+          <button class="secondary open-playlist" id="open-playlist">打开播放列表</button>
+        </section>
+      </div>
+
+      <div class="col">
+        <section class="card" aria-label="当前网页">
+          <div class="group-heading"><strong>当前网页</strong></div>
+          <div class="section-actions">
+            <button class="secondary" id="theater-current">铺满当前网页播放器</button>
+            <button class="plain" id="restore-current">还原</button>
+          </div>
+        </section>
+
+        <section class="card group-controls" aria-label="统一控制">
+          <div class="group-heading"><strong>统一控制</strong><span id="session-count">暂无窗口</span></div>
+          <div class="group-actions">
+            <button class="secondary" id="play-all">▶ 全部播放</button>
+            <button class="secondary" id="pause-all">Ⅱ 全部暂停</button>
+          </div>
+          <label class="progress-label" for="master-seek">同步进度 <span id="progress-value">0%</span></label>
+          <input id="master-seek" type="range" min="0" max="100" value="0" aria-label="将所有视频跳转到相同百分比">
+          <p class="progress-note">拖动后，所有可识别视频会跳转到各自时长的相同百分比。</p>
+        </section>
+
+        <section class="card card--grow session-section" aria-label="已打开的视频窗口">
+          <div class="group-heading"><strong>已打开窗口</strong><button class="refresh" id="refresh-sessions">刷新</button></div>
+          <ul id="session-list"><li class="empty-list">尚未打开视频网页。</li></ul>
+          <div class="section-actions">
+            <button class="secondary" id="show-player-grid">返回播放网格</button>
+            <button class="danger" id="close-all-windows">关闭全部窗口</button>
+          </div>
+        </section>
+
+        <section class="card control-bar-setting" aria-label="悬浮控制条设置">
+          <div>
+            <strong>窗口悬浮控制条</strong>
+            <p>默认显示；按住 Ctrl 操作可同步全部窗口。</p>
+          </div>
+          <button class="plain" id="toggle-floating-controls">隐藏</button>
+        </section>
+      </div>
+    </div>
+
     <p class="status" id="status" role="status"></p>
-    <footer>按 Esc 或右上角“退出铺满”可恢复原网页。</footer>
+    <footer>按 <kbd>Esc</kbd> 或右上角“退出铺满”可恢复原网页；<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Y</kbd> 切换控制中心与播放网格。</footer>
   </main>
   <script src="popup.js"></script>
 </body>

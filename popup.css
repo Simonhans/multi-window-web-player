@@ -1,1 +1,148 @@
-:root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:#121417;color:#eef0f1}*{box-sizing:border-box}body{width:360px;margin:0}main{padding:18px}header{display:flex;gap:10px;align-items:center;margin-bottom:17px}.mark{display:grid;place-items:center;width:32px;height:32px;border-radius:8px;background:#b7ee6a;color:#1d2811;font-size:13px;padding-left:2px}h1{font-size:14px;margin:0 0 2px}header p,.hint,footer{margin:0;color:#9298a1;font-size:11px;line-height:1.55}.current-actions{display:flex;gap:8px;margin-bottom:18px}button{border-radius:6px;padding:9px 10px;font:600 11px inherit;cursor:pointer}.secondary{color:#dbe0e3;background:#252930;border:1px solid #3c4149}.plain{color:#a7adb5;background:transparent;border:1px solid #363a42}label{display:block;font-size:11px;font-weight:700;margin-bottom:7px}textarea{display:block;resize:vertical;width:100%;min-height:115px;color:#e9ebed;background:#0c0e11;border:1px solid #343941;border-radius:6px;padding:10px;font:11px ui-monospace,"Cascadia Code",monospace;line-height:1.65;outline:none}textarea:focus{border-color:#74954a}.hint{margin:8px 0 13px}.primary{width:100%;color:#1f2a14;background:#b7ee6a;border:1px solid #b7ee6a}.primary:disabled{opacity:.55;cursor:wait}.import-button{width:100%;margin-top:8px;color:#cdd4da;background:#20242a;border:1px solid #3b4149}.import-section{border:1px solid #3c4441;border-radius:7px;background:#181d1c;margin-top:10px;padding:11px}.import-section .group-heading{margin-bottom:7px}.import-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid #29302d;cursor:pointer}.import-row:first-child{border-top:0}.import-row input{accent-color:#b7ee6a}.import-title{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#d6dadd;font-size:10px}.import-url{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#80878e;font:9px ui-monospace,"Cascadia Code",monospace}.import-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:9px}.import-actions button{padding:7px 9px}.playlist-section,.control-bar-setting,.group-controls,.session-section{border-top:1px solid #292d33;margin-top:16px;padding-top:14px}.control-bar-setting{display:flex;align-items:center;justify-content:space-between;gap:12px}.control-bar-setting strong{font-size:11px}.control-bar-setting p{margin:3px 0 0;color:#858b94;font-size:10px}.group-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}.group-heading strong{font-size:11px}.group-heading span,.progress-note{font-size:10px;color:#888e97}.group-actions{display:flex;gap:8px}.group-actions button{flex:1}.progress-label{display:flex;justify-content:space-between;margin-top:12px;font-size:10px!important;color:#aeb3ba}.progress-label span{font-family:ui-monospace,"Cascadia Code",monospace;color:#b7ee6a}.progress-note{margin:5px 0 0;line-height:1.45}.session-section{margin-top:13px}#master-seek{width:100%;margin:5px 0 0;accent-color:#b7ee6a}.refresh{border:0;padding:0;background:transparent;color:#b7ee6a;font-size:10px}#session-list,#playlist-list{list-style:none;margin:0;padding:0;max-height:138px;overflow:auto}.session-item{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid #24282e}.session-item:first-child{border-top:0}.session-url{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#aeb3ba;font:10px ui-monospace,"Cascadia Code",monospace}.remove-session{padding:3px 6px;border:1px solid #4b3939;background:#2c2020;color:#fa9d9d;font-size:10px}.open-playlist,.show-grid{width:100%;margin-top:9px}.empty-list{padding:5px 0;color:#777e87;font-size:10px}.status{min-height:18px;text-align:center;margin:9px 0 0;color:#b7ee6a}.status.error{color:#ff9b9b}footer{border-top:1px solid #292d33;margin-top:8px;padding-top:11px;font-size:10px}.install-notice{margin:0 0 14px;padding:9px 10px;border:1px solid #705d35;border-radius:6px;background:#2b271d;color:#d8c998;font-size:11px;line-height:1.55}.install-notice code{font-family:ui-monospace,"Cascadia Code",monospace;color:#eef0d7}
+:root{
+  color-scheme:dark;
+  --bg:#0e1014;
+  --card:#161a20;
+  --card-soft:#1e232b;
+  --field:#0b0d11;
+  --line:#2a3039;
+  --line-soft:#22272f;
+  --text:#eef0f1;
+  --text-2:#a8b0ba;
+  --text-3:#8b939e;
+  --accent:#b7ee6a;
+  --accent-ink:#1a2410;
+  --danger:#ff9a9a;
+  --danger-bg:#2b1e21;
+  --danger-line:#5b3a40;
+  --r:12px;
+  --r-sm:8px;
+  font-family:Inter,"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;
+  background:var(--bg);
+  color:var(--text)
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{width:100%;margin:0;overflow:hidden;background:var(--bg)}
+main{height:100%;max-width:1120px;margin:0 auto;padding:18px 22px 14px;display:flex;flex-direction:column;gap:13px}
+
+header{flex:none;display:flex;gap:12px;align-items:center}
+.mark{flex:none;display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:linear-gradient(140deg,#cbf58c,#9ed84e);color:#1b2410;font-size:14px;padding-left:2px;box-shadow:0 4px 18px #b7ee6a26}
+.titles{flex:1;min-width:0}
+h1{font-size:16px;margin:0 0 3px}
+header p{margin:0;color:var(--text-2);font-size:12px}
+.badge{flex:none;font-size:10px;font-weight:600;color:var(--accent);letter-spacing:.09em;padding:4px 9px;border-radius:20px;background:#b7ee6a14;border:1px solid #b7ee6a2e}
+
+/* 关键 1：用 minmax(0,1fr) 而不是 1fr。后者的隐式最小值是 auto，
+   会被长内容（比如很长的标签标题）撑开，把另一列压掉。
+   关键 2：grid-auto-rows:max-content。默认的 auto 行在容器高度不足时会被压缩到
+   min-content，而 .col 带 min-height:0 几乎能压到任意小，于是卡片溢出容器互相叠压。
+   用 max-content 让行始终按内容高度计算，放不下就交给 overflow:auto 滚动。 */
+.columns{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-auto-rows:max-content;gap:13px;overflow:auto}
+.col{display:flex;flex-direction:column;gap:13px;min-height:0;min-width:0}
+
+.card{flex:none;min-width:0;background:var(--card);border:1px solid var(--line-soft);border-radius:var(--r);padding:15px}
+.card--grow{flex:1 1 auto;min-height:150px;display:flex;flex-direction:column}
+.card--grow > ul{flex:1;min-height:0;max-height:none}
+.import-section{border-color:#2d3733;background:#151b19}
+
+button{min-height:36px;border:1px solid transparent;border-radius:var(--r-sm);padding:9px 13px;font-size:12px;font-weight:600;font-family:inherit;line-height:1.2;cursor:pointer;transition:background .18s,border-color .18s,color .18s,transform .07s}
+button:active:not(:disabled){transform:translateY(1px)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.secondary{color:#dde2e6;background:var(--card-soft);border-color:#333a44}
+.secondary:hover:not(:disabled){background:#262d37;border-color:#434c58}
+.plain{color:var(--text-2);background:transparent;border-color:#353c45}
+.plain:hover:not(:disabled){color:#dde2e6;background:#1c2128;border-color:#48515d}
+.danger{color:var(--danger);background:var(--danger-bg);border-color:var(--danger-line)}
+.danger:hover:not(:disabled){background:#3a262b;border-color:#73454d}
+.primary{width:100%;color:var(--accent-ink);background:var(--accent);border-color:var(--accent)}
+.primary:hover:not(:disabled){background:#c6f687}
+.primary:disabled{opacity:.55;cursor:wait}
+.import-button{width:100%;margin-top:9px;color:#ccd3d9;background:var(--card-soft);border-color:#333a44}
+.import-button:hover{background:#262d37;border-color:#434c58}
+
+label{display:block;font-size:12px;font-weight:700;margin-bottom:8px}
+textarea{display:block;resize:none;width:100%;height:112px;color:#e9ebed;background:var(--field);border:1px solid #2f353e;border-radius:var(--r-sm);padding:11px;font:12px/1.7 ui-monospace,"Cascadia Code",monospace;outline:none;transition:border-color .15s,box-shadow .15s}
+textarea::placeholder{color:#636b76}
+textarea:focus{border-color:#7fa552;box-shadow:0 0 0 3px #b7ee6a14}
+.hint{margin:9px 0 13px;color:var(--text-2);font-size:11px;line-height:1.6}
+
+.group-heading{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+.group-heading strong{font-size:12px}
+.group-heading span,.progress-note{font-size:11px;color:var(--text-3)}
+
+.section-actions{display:flex;gap:9px;flex:none;margin-top:10px}
+.section-actions button{flex:1;min-width:0}
+.group-actions{display:flex;gap:9px}
+.group-actions button{flex:1}
+
+.progress-label{display:flex;justify-content:space-between;margin-top:13px;font-size:11px;font-weight:600;color:var(--text-2)}
+.progress-label span{font-family:ui-monospace,"Cascadia Code",monospace;color:var(--accent)}
+.progress-note{margin:7px 0 0;line-height:1.5}
+
+#master-seek{-webkit-appearance:none;appearance:none;width:100%;height:4px;margin:10px 0 0;border-radius:2px;background:#2f353e;outline:none;cursor:pointer}
+#master-seek::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);border:2px solid var(--card);box-shadow:0 0 0 1px var(--accent);cursor:pointer;transition:transform .12s}
+#master-seek::-webkit-slider-thumb:hover{transform:scale(1.18)}
+#master-seek:focus-visible{box-shadow:0 0 0 3px #b7ee6a26}
+
+.refresh{border:0;padding:0;background:transparent;color:var(--accent);font-size:11px}
+.refresh:hover{color:#cdf595;background:transparent}
+
+#session-list,#playlist-list{list-style:none;margin:0;padding:0;max-height:150px;overflow:auto}
+#session-list::-webkit-scrollbar,#playlist-list::-webkit-scrollbar,.columns::-webkit-scrollbar{width:7px}
+#session-list::-webkit-scrollbar-thumb,#playlist-list::-webkit-scrollbar-thumb,.columns::-webkit-scrollbar-thumb{background:#39414d;border-radius:4px}
+#session-list::-webkit-scrollbar-thumb:hover,#playlist-list::-webkit-scrollbar-thumb:hover,.columns::-webkit-scrollbar-thumb:hover{background:#4b5563}
+#session-list::-webkit-scrollbar-track,#playlist-list::-webkit-scrollbar-track,.columns::-webkit-scrollbar-track{background:transparent}
+
+.session-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #232931}
+.session-item:first-child{border-top:0}
+.session-url{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2);font:11px ui-monospace,"Cascadia Code",monospace}
+.remove-session{flex:none;padding:4px 9px;border-radius:6px;border:1px solid var(--danger-line);background:var(--danger-bg);color:var(--danger);font-size:11px}
+.remove-session:hover{background:#3a262b;border-color:#73454d}
+
+.open-playlist{width:100%;flex:none;margin-top:10px}
+.empty-list{padding:6px 0;color:var(--text-3);font-size:11px}
+
+.control-bar-setting{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.control-bar-setting strong{font-size:12px}
+.control-bar-setting p{margin:4px 0 0;color:var(--text-3);font-size:11px;line-height:1.5}
+
+.import-section .group-heading{margin-bottom:8px}
+#import-list{max-height:190px;overflow:auto}
+#import-list::-webkit-scrollbar{width:7px}
+#import-list::-webkit-scrollbar-thumb{background:#39414d;border-radius:4px}
+#import-list::-webkit-scrollbar-thumb:hover{background:#4b5563}
+/* 关键：文案区必须是可压缩的 flex 子项，否则长标题会撑爆整行、进而顶宽整列。 */
+.import-row{display:flex;align-items:center;gap:9px;padding:7px 0;border-top:1px solid #232931;cursor:pointer;min-width:0}
+.import-row:first-child{border-top:0}
+.import-row input{flex:none;accent-color:var(--accent);cursor:pointer}
+.import-row > span{flex:1;min-width:0}
+.import-title{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#d6dadd;font-size:11px}
+.import-url{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--text-3);font:10px ui-monospace,"Cascadia Code",monospace}
+.import-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;flex:none}
+.import-actions button{padding:8px 11px}
+
+.status{flex:none;min-height:18px;text-align:center;margin:0;color:var(--accent);font-size:12px;transition:color .15s}
+.status.error{color:#ff9b9b}
+
+footer{flex:none;border-top:1px solid var(--line-soft);padding-top:11px;font-size:11px;color:var(--text-3);line-height:1.8;text-align:center}
+kbd{border:1px solid #3f4650;border-radius:4px;background:#1e222a;padding:2px 5px;color:#cbd0d4;font-family:ui-monospace,"Cascadia Code",monospace;font-size:10px}
+
+.install-notice{flex:none;margin:0;padding:11px 13px;border:1px solid #6b5a34;border-radius:var(--r-sm);background:#28241a;color:#d8c998;font-size:12px;line-height:1.6}
+.install-notice code{font-family:ui-monospace,"Cascadia Code",monospace;color:#eef0d7}
+
+@media (max-width:820px){
+  main{padding:14px 14px 12px;gap:11px}
+  .columns{grid-template-columns:minmax(0,1fr);gap:11px;overflow:auto}
+  .col{gap:11px}
+  .card--grow{flex:none;min-height:0}
+  .card--grow > ul{max-height:180px}
+}
+
+/* 键盘可达性：焦点环只在键盘导航时出现，鼠标点击不显示。 */
+button:focus-visible,#master-seek:focus-visible,.import-row input:focus-visible,.refresh:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.import-row:focus-within{background:#1c2229}
+
+/* 尊重系统"减少动态效果"设置。 */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}
+}

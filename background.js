@@ -48,6 +48,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'close-all-player-windows') {
+    closeAllPlayerWindows()
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message.type === 'get-importable-tabs') {
     getImportableTabs()
       .then(tabs => sendResponse({ ok: true, tabs }))
@@ -287,6 +294,15 @@ async function closePlayerWindow(windowId) {
   await chrome.windows.remove(windowId);
   const sessions = await getPlayerSessions();
   await chrome.storage.local.set({ playerSessions: sessions.filter(session => session.windowId !== windowId) });
+}
+
+async function closeAllPlayerWindows() {
+  const sessions = await getPlayerSessions();
+  if (!sessions.length) return { closed: 0 };
+  // 逐个关闭：单个窗口已经不存在时不应影响其余窗口，因此用 allSettled 收敛结果。
+  await Promise.allSettled(sessions.map(session => chrome.windows.remove(session.windowId)));
+  await chrome.storage.local.set({ playerSessions: [] });
+  return { closed: sessions.length };
 }
 
 async function controlPlayerWindows(action, value) {

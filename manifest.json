@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "多窗口网页播放器",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "将多个视频网页分别打开为独立窗口，并让页面中的主播放器铺满窗口。",
   "action": {
     "default_title": "打开多窗口播放器控制中心"

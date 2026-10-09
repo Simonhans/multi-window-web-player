@@ -246,6 +246,17 @@ document.querySelector('#show-player-grid').addEventListener('click', async () =
   show(`已显示 ${result.shown} 个独立播放窗口。`);
 });
 
+document.querySelector('#close-all-windows').addEventListener('click', async () => {
+  const list = await chrome.runtime.sendMessage({ type: 'list-player-windows' });
+  const count = list?.sessions?.length || 0;
+  if (!count) { show('还没有可关闭的独立播放器窗口。', true); return; }
+  if (!window.confirm(`确定要关闭全部 ${count} 个独立播放器窗口吗？`)) return;
+  const result = await chrome.runtime.sendMessage({ type: 'close-all-player-windows' });
+  if (!result.ok) { show(result.error, true); return; }
+  show(`已关闭 ${result.closed} 个独立播放器窗口。`);
+  await refreshSessions();
+});
+
 if (isExtension) {
   chrome.storage.local.get('floatingControlsVisible').then(({ floatingControlsVisible: saved }) => {
     floatingControlsVisible = saved ?? true;
@@ -253,4 +264,20 @@ if (isExtension) {
   });
   refreshSessions();
   refreshPlaylist();
+}
+
+// 作为控制中心的 iframe 内嵌时，把内容实际高度同步给外层，避免外层写死高度
+// 导致内容被裁切、出现双重滚动条。MV3 的 CSP 是 script-src 'self'，
+// 这段逻辑必须放在外部文件里，不能写成内联 script。
+if (window.parent !== window) {
+  const notifyHeight = () => {
+    // 用 main 的实际高度而非 body.scrollHeight：body 会被 iframe 视口拉伸，
+    // 内容比视口矮时 scrollHeight 会返回视口高度，导致外层多出一截空白。
+    const main = document.querySelector('main');
+    const height = Math.ceil(main ? main.getBoundingClientRect().height : document.body.scrollHeight);
+    window.parent.postMessage({ type: 'player-dashboard-resize', height }, '*');
+  };
+  if (window.ResizeObserver) new ResizeObserver(notifyHeight).observe(document.body);
+  window.addEventListener('load', notifyHeight);
+  notifyHeight();
 }
