@@ -65,7 +65,6 @@ web-player-windows/
 ├── dashboard.html/css  # 独立控制中心页面
 ├── popup.html/css/js   # 控制中心界面与交互
 ├── PRIVACY.md          # 数据与隐私说明
-├── PUBLISHING.md       # 发布到 GitHub 前的整理指南
 └── README.md
 ```
 

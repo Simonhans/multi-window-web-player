@@ -303,11 +303,22 @@ async function controlPlayerWindows(action, value) {
 }
 
 function sendControl(sessions, action, value) {
-  return Promise.allSettled(sessions.map(session => chrome.scripting.executeScript({
-    target: { tabId: session.tabId, allFrames: true },
-    func: controlPageVideo,
-    args: [action, value]
-  })));
+  // value 为 undefined 时不能直接放进 args：executeScript 要求参数可序列化，
+  // 否则会同步抛出 "Value is unserializable"，导致整条统一控制链路中断。
+  const args = value === undefined ? [action] : [action, value];
+  return Promise.allSettled(sessions.map(session => {
+    try {
+      return chrome.scripting.executeScript({
+        target: { tabId: session.tabId, allFrames: true },
+        func: controlPageVideo,
+        args
+      });
+    } catch (error) {
+      // executeScript 的参数校验错误是同步抛出的，Promise.allSettled 捕获不到，
+      // 这里显式转成 rejected promise，避免单个窗口的失败拖垮整批控制。
+      return Promise.reject(error);
+    }
+  }));
 }
 
 function countFound(outcomes) {
