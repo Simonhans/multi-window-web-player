@@ -1,0 +1,10 @@
+# 统一使用 LF 换行，避免跨平台协作时出现换行符差异
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.crx binary
+*.pem binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.ico binary

@@ -1,0 +1,12 @@
+# Browser extension packages and signing keys
+*.crx
+*.pem
+*.zip
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
