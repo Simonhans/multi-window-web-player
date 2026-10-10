@@ -20,7 +20,7 @@ function show(message, error = false) {
 }
 
 function updateFloatingControlsButton() {
-  document.querySelector('#toggle-floating-controls').textContent = floatingControlsVisible ? '隐藏' : '显示';
+  document.querySelector('#toggle-floating-controls').setAttribute('aria-checked', String(floatingControlsVisible));
 }
 
 function parseUrls() {
@@ -58,19 +58,30 @@ async function refreshSessions() {
   sessions.forEach(session => {
     const item = document.createElement('li');
     item.className = 'session-item';
+    const label = session.title || session.url;
+    const thumb = document.createElement('span');
+    thumb.className = 'thumb';
+    thumb.textContent = (label.trim()[0] || '·').toUpperCase();
+    const info = document.createElement('span');
+    info.className = 'session-info';
+    const title = document.createElement('span');
+    title.className = 'session-title';
+    title.textContent = label;
+    title.title = label;
     const url = document.createElement('span');
     url.className = 'session-url';
-    url.textContent = session.title || session.url;
+    url.textContent = session.url;
     url.title = session.url;
+    info.append(title, url);
     const remove = document.createElement('button');
     remove.className = 'remove-session';
-    remove.textContent = '关闭';
+    remove.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>关闭';
     remove.addEventListener('click', async () => {
       const closeResult = await chrome.runtime.sendMessage({ type: 'close-player-window', windowId: session.windowId });
       if (!closeResult.ok) show(closeResult.error, true);
       await refreshSessions();
     });
-    item.append(url, remove);
+    item.append(thumb, info, remove);
     list.append(item);
   });
 }
@@ -81,6 +92,7 @@ async function refreshPlaylist() {
   if (!result.ok) { show(result.error, true); return []; }
   const list = document.querySelector('#playlist-list');
   list.replaceChildren();
+  document.querySelector('#playlist-count').textContent = `共 ${result.items.length} 个视频`;
   if (!result.items.length) {
     const empty = document.createElement('li');
     empty.className = 'empty-list';
@@ -91,18 +103,29 @@ async function refreshPlaylist() {
   result.items.forEach(item => {
     const row = document.createElement('li');
     row.className = 'session-item';
+    const label = item.title || item.url;
+    const thumb = document.createElement('span');
+    thumb.className = 'thumb';
+    thumb.textContent = (label.trim()[0] || '·').toUpperCase();
+    const info = document.createElement('span');
+    info.className = 'session-info';
     const title = document.createElement('span');
-    title.className = 'session-url';
-    title.textContent = item.title || item.url;
-    title.title = item.url;
+    title.className = 'session-title';
+    title.textContent = label;
+    title.title = label;
+    const url = document.createElement('span');
+    url.className = 'session-url';
+    url.textContent = item.url;
+    url.title = item.url;
+    info.append(title, url);
     const remove = document.createElement('button');
     remove.className = 'remove-session';
-    remove.textContent = '移除';
+    remove.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>移除';
     remove.addEventListener('click', async () => {
       await chrome.runtime.sendMessage({ type: 'remove-playlist-item', url: item.url });
       await refreshPlaylist();
     });
-    row.append(title, remove);
+    row.append(thumb, info, remove);
     list.append(row);
   });
   return result.items;
@@ -199,7 +222,13 @@ document.querySelector('#import-tabs').addEventListener('click', async () => {
   importableTabs = result.tabs;
   if (!importableTabs.length) { show('当前浏览器窗口没有可导入的网页标签。', true); return; }
   renderImportTabs();
+  document.querySelector('#select-all-tabs').checked = true;
   document.querySelector('#import-section').hidden = false;
+});
+
+document.querySelector('#select-all-tabs').addEventListener('change', event => {
+  const checked = event.target.checked;
+  document.querySelectorAll('#import-list input[type="checkbox"]').forEach(box => { box.checked = checked; });
 });
 
 document.querySelector('#cancel-import').addEventListener('click', () => {
@@ -265,6 +294,15 @@ if (isExtension) {
   refreshSessions();
   refreshPlaylist();
 }
+
+// 输入区行号：跟随内容行数变化（与 textarea 的行高、上内边距保持一致才能对齐）。
+const urlsGutter = document.querySelector('#urls-gutter');
+function updateUrlGutter() {
+  const lines = Math.max(1, urlsInput.value.split('\n').length);
+  urlsGutter.textContent = Array.from({ length: lines }, (_, index) => index + 1).join('\n');
+}
+urlsInput.addEventListener('input', updateUrlGutter);
+updateUrlGutter();
 
 // 作为控制中心的 iframe 内嵌时，把内容实际高度同步给外层，避免外层写死高度
 // 导致内容被裁切、出现双重滚动条。MV3 的 CSP 是 script-src 'self'，
