@@ -293,6 +293,7 @@ if (isExtension) {
   });
   refreshSessions();
   refreshPlaylist();
+  refreshBookmarks();
 }
 
 // 输入区行号：跟随内容行数变化（与 textarea 的行高、上内边距保持一致才能对齐）。
@@ -303,6 +304,117 @@ function updateUrlGutter() {
 }
 urlsInput.addEventListener('input', updateUrlGutter);
 updateUrlGutter();
+
+// ---------- 视频书签 ----------
+const formatStamp = seconds => {
+  if (!Number.isFinite(seconds) || seconds < 0) return '--:--';
+  const total = Math.floor(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor(total % 3600 / 60);
+  const s = total % 60;
+  const pad = value => String(value).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+};
+
+async function refreshBookmarks() {
+  if (!isExtension) return [];
+  const result = await chrome.runtime.sendMessage({ type: 'list-all-bookmarks' });
+  if (!result.ok) { show(result.error, true); return []; }
+  const list = document.querySelector('#bookmark-list');
+  list.replaceChildren();
+  const total = result.groups.reduce((sum, group) => sum + group.items.length, 0);
+  document.querySelector('#bookmark-count').textContent = `共 ${total} 条`;
+  if (!result.groups.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty-list';
+    empty.textContent = '在播放窗口点 ＋ 即可记录当前进度。';
+    list.append(empty);
+    return [];
+  }
+  result.groups.forEach(group => {
+    const head = document.createElement('li');
+    head.className = 'bookmark-group';
+    head.textContent = group.title || group.url;
+    head.title = group.url;
+    list.append(head);
+    group.items.forEach(item => {
+      const row = document.createElement('li');
+      row.className = 'session-item';
+      const time = document.createElement('button');
+      time.className = 'bookmark-time';
+      time.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l12 8-12 8z"/></svg><span>${formatStamp(item.time)}</span>`;
+      time.title = '跳到该进度';
+      time.addEventListener('click', async () => {
+        const jump = await chrome.runtime.sendMessage({
+          type: 'jump-bookmark', key: group.key, time: item.time, duration: item.duration, url: group.url
+        });
+        if (!jump.ok) { show(jump.error, true); return; }
+        if (jump.applied) {
+          show(jump.opened ? `已打开视频并跳到 ${formatStamp(item.time)}。` : `已跳到 ${formatStamp(item.time)}。`);
+        } else {
+          show(jump.opened ? '视频已打开，但没识别到可跳转的播放器，请稍后手动拖动进度。' : '跳转失败，请重试。', true);
+        }
+      });
+      const drop = document.createElement('button');
+      drop.className = 'remove-session';
+      drop.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>删除';
+      drop.addEventListener('click', async () => {
+        await chrome.runtime.sendMessage({ type: 'remove-bookmark', id: item.id });
+        await refreshBookmarks();
+      });
+      row.append(time, drop);
+      list.append(row);
+    });
+  });
+  return result.groups;
+}
+
+document.querySelector('#export-bookmarks').addEventListener('click', async () => {
+  if (!isExtension) return;
+  const result = await chrome.runtime.sendMessage({ type: 'list-all-bookmarks' });
+  if (!result.ok) { show(result.error, true); return; }
+  if (!result.groups.length) { show('还没有书签可以导出。', true); return; }
+  const payload = {
+    format: 'multi-window-web-player-bookmarks',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    groups: result.groups.map(group => ({
+      url: group.url,
+      title: group.title,
+      items: group.items.map(item => ({ time: item.time, duration: item.duration, createdAt: item.createdAt }))
+    }))
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = `video-bookmarks-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(href), 1000);
+  show(`已导出 ${payload.groups.reduce((sum, group) => sum + group.items.length, 0)} 条书签。`);
+});
+
+document.querySelector('#import-bookmarks').addEventListener('click', () => {
+  if (!isExtension) return;
+  document.querySelector('#bookmark-file').click();
+});
+
+document.querySelector('#bookmark-file').addEventListener('change', async event => {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  try {
+    const payload = JSON.parse(await file.text());
+    const groups = Array.isArray(payload) ? payload : payload.groups;
+    if (!Array.isArray(groups)) throw new Error('文件里没有找到书签数据。');
+    const result = await chrome.runtime.sendMessage({ type: 'import-bookmarks', groups });
+    if (!result.ok) throw new Error(result.error);
+    show(`已导入 ${result.added} 条书签。`);
+    await refreshBookmarks();
+  } catch (error) {
+    show(error.message || '导入失败。', true);
+  }
+});
 
 // 作为控制中心的 iframe 内嵌时，把内容实际高度同步给外层，避免外层写死高度
 // 导致内容被裁切、出现双重滚动条。MV3 的 CSP 是 script-src 'self'，

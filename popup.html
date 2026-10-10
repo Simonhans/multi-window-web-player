@@ -146,6 +146,29 @@
           </div>
         </section>
 
+      </div>
+
+      <div class="col">
+        <section class="card card--grow bookmark-section" aria-label="视频书签">
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-5-6 5z"/></svg></span>
+            <div class="card-title"><strong>视频书签</strong></div>
+            <span class="pill" id="bookmark-count">共 0 条</span>
+          </div>
+          <ul id="bookmark-list"><li class="empty-list">在播放窗口点 ＋ 即可记录当前进度。</li></ul>
+          <div class="section-actions">
+            <button class="secondary" id="export-bookmarks">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4M5 21h14"/></svg>
+              <span>导出</span>
+            </button>
+            <button class="secondary" id="import-bookmarks">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M8 7l4-4 4 4M5 21h14"/></svg>
+              <span>导入</span>
+            </button>
+          </div>
+          <input type="file" id="bookmark-file" accept=".json,application/json" hidden>
+        </section>
+
         <section class="card control-bar-setting" aria-label="悬浮控制条设置">
           <div class="card-head">
             <span class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg></span>

@@ -55,6 +55,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'get-bookmarks') {
+    getBookmarks(message.url)
+      .then(items => sendResponse({ ok: true, items }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'add-bookmark') {
+    addBookmark(message.url, message.title, message.time, message.duration)
+      .then(item => sendResponse({ ok: true, item }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'remove-bookmark') {
+    removeBookmark(message.id)
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'list-all-bookmarks') {
+    listAllBookmarks()
+      .then(groups => sendResponse({ ok: true, groups }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'clear-bookmarks') {
+    chrome.storage.local.set({ bookmarks: {} })
+      .then(() => sendResponse({ ok: true }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'import-bookmarks') {
+    importBookmarks(message.groups)
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'jump-bookmark') {
+    jumpToBookmark(message.key, message.time, message.duration, message.url)
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message.type === 'get-importable-tabs') {
     getImportableTabs()
       .then(tabs => sendResponse({ ok: true, tabs }))
@@ -108,7 +157,12 @@ async function openDashboard() {
   const [existing] = await chrome.tabs.query({ url: dashboardUrl });
   if (existing?.id) {
     await chrome.tabs.update(existing.id, { active: true });
-    if (existing.windowId) await chrome.windows.update(existing.windowId, { focused: true });
+    if (existing.windowId) {
+      // 先恢复再聚焦：控制中心可能刚被「返回播放网格」最小化过，
+      // 只 focused 不一定能把它从最小化状态带出来。
+      await chrome.windows.update(existing.windowId, { state: 'normal' }).catch(() => {});
+      await chrome.windows.update(existing.windowId, { focused: true }).catch(() => {});
+    }
     return;
   }
   await chrome.tabs.create({ url: dashboardUrl, active: true });
@@ -254,8 +308,11 @@ async function showPlayerGrid() {
     await chrome.windows.update(currentWindow.id, { state: 'minimized' }).catch(() => {});
   }
   await arrangePlayerWindows(sessions);
-  const finalWindow = sessions.at(-1)?.windowId;
-  if (finalWindow) await chrome.windows.update(finalWindow, { focused: true });
+  // 依次聚焦每个播放窗口：每次聚焦都会把该窗口提到 Z 序最前，
+  // 这样全部播放窗口都盖在控制中心之上，而不是只把最后一个提前。
+  for (const session of sessions) {
+    await chrome.windows.update(session.windowId, { state: 'normal', focused: true }).catch(() => {});
+  }
   return { shown: sessions.length };
 }
 
@@ -303,6 +360,198 @@ async function closeAllPlayerWindows() {
   await Promise.allSettled(sessions.map(session => chrome.windows.remove(session.windowId)));
   await chrome.storage.local.set({ playerSessions: [] });
   return { closed: sessions.length };
+}
+
+// ---------- 视频书签 ----------
+// 书签挂在「归一化后的视频网址」上，而不是挂在窗口上：窗口只是临时载体，
+// 关掉窗口/浏览器都不影响书签，下次打开同一网址时再按 URL 查回来。
+
+// 需要剥掉的跟踪参数。注意保留 p / v / ep / season 这类真正区分内容的参数。
+const BOOKMARK_TRACKING_PARAMS = /^(t|start|time_continue|from|from_source|spm_id_from|vd_source|si|feature|ref|refer|fbclid|gclid|_source|share_source|share_medium|share_plat|share_tag|timestamp|unique_k|utm_.*|share_.*)$/i;
+
+function normalizeVideoUrl(raw) {
+  try {
+    const url = new URL(raw);
+    const drop = [];
+    for (const key of url.searchParams.keys()) {
+      if (BOOKMARK_TRACKING_PARAMS.test(key)) drop.push(key);
+    }
+    for (const key of drop) url.searchParams.delete(key);
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+  } catch (_) {
+    return String(raw || '');
+  }
+}
+
+async function getBookmarkStore() {
+  const { bookmarks = {} } = await chrome.storage.local.get('bookmarks');
+  return bookmarks;
+}
+
+async function getBookmarks(url) {
+  const store = await getBookmarkStore();
+  const entry = store[normalizeVideoUrl(url)];
+  return entry ? entry.items : [];
+}
+
+async function addBookmark(url, title, time, duration) {
+  const key = normalizeVideoUrl(url);
+  if (!key) throw new Error('缺少视频网址，无法记录书签。');
+  const store = await getBookmarkStore();
+  const entry = store[key] || { url, title: title || url, items: [] };
+  entry.url = url || entry.url;
+  if (title) entry.title = title;
+  const seconds = Number(time);
+  if (!Number.isFinite(seconds) || seconds < 0) throw new Error('当前播放进度不可用，无法记录书签。');
+  const item = {
+    id: `bm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+    time: seconds,
+    duration: Number.isFinite(Number(duration)) && Number(duration) > 0 ? Number(duration) : 0,
+    createdAt: Date.now()
+  };
+  entry.items = [...entry.items, item].sort((a, b) => a.time - b.time);
+  store[key] = entry;
+  await chrome.storage.local.set({ bookmarks: store });
+  return item;
+}
+
+async function removeBookmark(id) {
+  const store = await getBookmarkStore();
+  let removed = 0;
+  for (const key of Object.keys(store)) {
+    const entry = store[key];
+    const next = entry.items.filter(item => item.id !== id);
+    if (next.length !== entry.items.length) {
+      removed += entry.items.length - next.length;
+      if (next.length) entry.items = next;
+      else delete store[key];
+    }
+  }
+  if (removed) await chrome.storage.local.set({ bookmarks: store });
+  return { removed };
+}
+
+async function listAllBookmarks() {
+  const store = await getBookmarkStore();
+  return Object.entries(store)
+    .map(([key, entry]) => ({ key, url: entry.url, title: entry.title, items: entry.items }))
+    .filter(entry => entry.items.length)
+    .sort((a, b) => {
+      const at = Math.max(...a.items.map(i => i.createdAt || 0));
+      const bt = Math.max(...b.items.map(i => i.createdAt || 0));
+      return bt - at;
+    });
+}
+
+async function importBookmarks(groups) {
+  if (!Array.isArray(groups)) throw new Error('导入内容格式不正确。');
+  const store = await getBookmarkStore();
+  let added = 0;
+  for (const group of groups) {
+    const key = normalizeVideoUrl(group && group.url);
+    if (!key || !Array.isArray(group.items)) continue;
+    const entry = store[key] || { url: group.url, title: group.title || group.url, items: [] };
+    if (group.title) entry.title = group.title;
+    const existing = new Set(entry.items.map(i => `${i.time}|${i.duration}`));
+    for (const raw of group.items) {
+      const seconds = Number(raw && raw.time);
+      if (!Number.isFinite(seconds) || seconds < 0) continue;
+      const duration = Number(raw && raw.duration) || 0;
+      if (existing.has(`${seconds}|${duration}`)) continue;
+      entry.items.push({
+        id: `bm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+        time: seconds,
+        duration,
+        createdAt: Number(raw && raw.createdAt) || Date.now()
+      });
+      existing.add(`${seconds}|${duration}`);
+      added += 1;
+    }
+    entry.items.sort((a, b) => a.time - b.time);
+    store[key] = entry;
+  }
+  await chrome.storage.local.set({ bookmarks: store });
+  return { added };
+}
+
+// 跳到书签。若对应视频当前没打开，直接用书签里存的网址新开一个播放窗口，
+// 等视频就绪后再跳转 —— 这样控制中心里点书签是"一步到位"，不需要先手动打开。
+// 定位优先按秒数；若当前时长与记录时相差超过 5%（不同片源版本），改按百分比换算。
+async function jumpToBookmark(key, time, savedDuration, url) {
+  let sessions = await getPlayerSessions();
+  let target = sessions.find(session => normalizeVideoUrl(session.url) === key);
+  let opened = false;
+
+  if (!target) {
+    if (!url) return { applied: false, reason: 'no-url' };
+    await openPlayerWindows([url]);
+    opened = true;
+    sessions = await getPlayerSessions();
+    target = sessions.find(session => normalizeVideoUrl(session.url) === key) || sessions[sessions.length - 1];
+    if (!target || !target.tabId) return { applied: false, reason: 'open-failed', opened: true };
+    // 页面加载完不等于视频就绪，必须等到 duration 可用才谈得上跳转。
+    await waitForVideoReady(target.tabId);
+  }
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: target.tabId, allFrames: true },
+    func: applyBookmarkSeek,
+    args: [Number(time) || 0, Number(savedDuration) || 0]
+  });
+  if (target.windowId) {
+    await chrome.windows.update(target.windowId, { state: 'normal' }).catch(() => {});
+    await chrome.windows.update(target.windowId, { focused: true }).catch(() => {});
+  }
+  return { applied: results.some(item => item.result && item.result.ok), opened };
+}
+
+// 轮询等待目标页面的 video 拿到可用时长（新开的窗口需要一点时间加载片源）。
+async function waitForVideoReady(tabId, timeout = 20000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: probeVideoReady
+    }).catch(() => []);
+    if (results.some(item => item.result)) return true;
+    await new Promise(resolve => setTimeout(resolve, 400));
+  }
+  return false;
+}
+
+// 同样会被序列化到目标网页中执行。
+function probeVideoReady() {
+  const videos = [...document.querySelectorAll('video')].filter(video => {
+    const rect = video.getBoundingClientRect();
+    return rect.width > 32 && rect.height > 32;
+  });
+  return videos.some(video => Number.isFinite(video.duration) && video.duration > 0);
+}
+
+// 此函数会被序列化到目标网页中，不能引用扩展环境的变量。
+function applyBookmarkSeek(time, savedDuration) {
+  const visible = [...document.querySelectorAll('video')].filter(video => {
+    const style = getComputedStyle(video);
+    const rect = video.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 32 && rect.height > 32;
+  }).sort((a, b) => {
+    const ar = a.getBoundingClientRect();
+    const br = b.getBoundingClientRect();
+    return br.width * br.height - ar.width * ar.height;
+  });
+  const video = visible[0];
+  if (!video) return { ok: false, reason: 'no-video' };
+  let target = time;
+  if (savedDuration > 0 && Number.isFinite(video.duration) && video.duration > 0) {
+    const drift = Math.abs(video.duration - savedDuration) / savedDuration;
+    if (drift > 0.05) target = (time / savedDuration) * video.duration;
+  }
+  if (Number.isFinite(video.duration) && video.duration > 0) {
+    target = Math.max(0, Math.min(video.duration, target));
+  }
+  video.currentTime = target;
+  return { ok: true, currentTime: video.currentTime, duration: video.duration };
 }
 
 async function controlPlayerWindows(action, value) {
@@ -470,7 +719,9 @@ function startTheaterMode(showFloatingControls = true) {
   window[stateKey] = state;
   installExitButton(state);
   installPlaybackControls(video, state);
-  video.play().catch(() => {});
+  // 这里刻意不调用 play()。扩展用 chrome.windows.create 开出的窗口没有用户手势，
+  // 浏览器的自动播放策略会以 NotAllowedError 拒绝带声音的 play()；静音降级又会让用户
+  // 莫名其妙听不到声音。所以交给用户点页面自己的播放按钮，或用悬浮控制条上的播放键。
   return { status: 'video-expanded', tag: box.tagName };
 
   function installExitButton(currentState) {
@@ -515,13 +766,18 @@ function startTheaterMode(showFloatingControls = true) {
     const total = document.createElement('span');
     const range = document.createElement('input');
     const mute = makeButton('◖', '静音切换');
+    const mark = makeButton('＋', '把当前进度记为书签');
+    const marks = makeButton('⚑', '查看书签');
     range.type = 'range'; range.min = '0'; range.max = '1000'; range.value = '0';
     range.setAttribute('aria-label', '视频进度');
     range.style.cssText = 'flex:1!important;min-width:50px!important;accent-color:#b7ee6a!important;cursor:pointer!important';
     [current, total].forEach(item => item.style.cssText = 'color:#e0e2e3!important;font:10px ui-monospace,Consolas,monospace!important;white-space:nowrap!important');
     const separator = document.createElement('span'); separator.textContent = '/'; separator.style.cssText = 'color:#83878c!important;font-size:10px!important;margin:-6px!important';
-    bar.append(back, toggle, forward, current, separator, total, range, mute);
-    document.body.append(bar);
+    const markPanel = document.createElement('div');
+    markPanel.setAttribute('data-multi-player-bookmarks', 'true');
+    markPanel.style.cssText = 'position:fixed!important;left:50%!important;bottom:56px!important;z-index:2147483647!important;display:none!important;flex-direction:column!important;gap:4px!important;width:min(320px,calc(100vw - 34px))!important;max-height:250px!important;overflow:auto!important;padding:8px!important;border:1px solid #ffffff2b!important;border-radius:9px!important;background:#121212f2!important;box-shadow:0 8px 30px #000a!important;backdrop-filter:blur(10px)!important;transform:translateX(-50%)!important';
+    bar.append(back, toggle, forward, current, separator, total, range, mute, mark, marks);
+    document.body.append(bar, markPanel);
     const format = seconds => {
       if (!Number.isFinite(seconds) || seconds < 0) return '--:--';
       const rounded = Math.floor(seconds);
@@ -556,6 +812,84 @@ function startTheaterMode(showFloatingControls = true) {
       const fraction = Number(range.value) / 1000;
       if (!applyToAll(event, 'seek', fraction) && Number.isFinite(currentVideo.duration)) currentVideo.currentTime = fraction * currentVideo.duration;
     });
+
+    // ---- 视频书签 ----
+    let bookmarkItems = [];
+    const canMessage = () => typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage;
+    const renderBookmarks = () => {
+      markPanel.replaceChildren();
+      marks.textContent = bookmarkItems.length ? `⚑${bookmarkItems.length}` : '⚑';
+      if (!bookmarkItems.length) {
+        const empty = document.createElement('span');
+        empty.textContent = '还没有书签，点 ＋ 记录当前进度';
+        empty.style.cssText = 'color:#9aa0a6!important;font:11px system-ui!important;padding:7px 5px!important';
+        markPanel.append(empty);
+        return;
+      }
+      bookmarkItems.forEach(item => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex!important;align-items:center!important;gap:6px!important';
+        const jump = document.createElement('button');
+        jump.type = 'button';
+        jump.textContent = format(item.time);
+        jump.title = `跳到 ${format(item.time)}`;
+        jump.style.cssText = 'flex:1!important;text-align:left!important;padding:6px 9px!important;border:0!important;border-radius:5px!important;background:#2b2d31!important;color:#f0f0f0!important;font:12px ui-monospace,Consolas,monospace!important;cursor:pointer!important';
+        jump.addEventListener('click', () => {
+          // 时长差异超过 5% 时按百分比换算，避免不同片源版本整体偏移。
+          let target = item.time;
+          if (item.duration > 0 && Number.isFinite(currentVideo.duration) && currentVideo.duration > 0) {
+            if (Math.abs(currentVideo.duration - item.duration) / item.duration > 0.05) {
+              target = item.time / item.duration * currentVideo.duration;
+            }
+          }
+          if (Number.isFinite(currentVideo.duration) && currentVideo.duration > 0) {
+            target = Math.max(0, Math.min(currentVideo.duration, target));
+          }
+          currentVideo.currentTime = target;
+          markPanel.style.setProperty('display', 'none', 'important');
+        });
+        const drop = document.createElement('button');
+        drop.type = 'button';
+        drop.textContent = '×';
+        drop.setAttribute('aria-label', '删除该书签');
+        drop.style.cssText = 'width:25px!important;height:25px!important;border:0!important;border-radius:5px!important;background:#3a2526!important;color:#ff9d9d!important;font:13px system-ui!important;cursor:pointer!important';
+        drop.addEventListener('click', async () => {
+          if (!canMessage()) return;
+          await chrome.runtime.sendMessage({ type: 'remove-bookmark', id: item.id }).catch(() => {});
+          bookmarkItems = bookmarkItems.filter(entry => entry.id !== item.id);
+          renderBookmarks();
+        });
+        row.append(jump, drop);
+        markPanel.append(row);
+      });
+    };
+    const loadBookmarks = async () => {
+      if (!canMessage()) return;
+      const result = await chrome.runtime.sendMessage({ type: 'get-bookmarks', url: location.href }).catch(() => null);
+      if (result && result.ok) { bookmarkItems = result.items || []; renderBookmarks(); }
+    };
+    mark.addEventListener('click', async () => {
+      if (!canMessage() || !Number.isFinite(currentVideo.currentTime)) return;
+      const result = await chrome.runtime.sendMessage({
+        type: 'add-bookmark',
+        url: location.href,
+        title: document.title,
+        time: currentVideo.currentTime,
+        duration: currentVideo.duration
+      }).catch(() => null);
+      if (result && result.ok) {
+        bookmarkItems = [...bookmarkItems, result.item].sort((a, b) => a.time - b.time);
+        renderBookmarks();
+        markPanel.style.setProperty('display', 'flex', 'important');
+      }
+    });
+    marks.addEventListener('click', () => {
+      const isHidden = markPanel.style.display !== 'flex';
+      markPanel.style.setProperty('display', isHidden ? 'flex' : 'none', 'important');
+      if (isHidden) loadBookmarks();
+    });
+    loadBookmarks();
+
     const reveal = () => { bar.style.opacity = '1'; };
     const dim = () => { if (!bar.matches(':hover')) bar.style.opacity = '.22'; };
     bar.addEventListener('mouseenter', reveal); bar.addEventListener('mouseleave', dim);
@@ -565,6 +899,7 @@ function startTheaterMode(showFloatingControls = true) {
     refresh();
     currentState.cleanup.push(
       () => bar.remove(),
+      () => markPanel.remove(),
       () => events.forEach(event => currentVideo.removeEventListener(event, refresh)),
       () => document.removeEventListener('mousemove', reveal)
     );
