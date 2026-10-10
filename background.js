@@ -28,8 +28,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'list-player-windows') {
-    getPlayerSessions()
-      .then(sessions => sendResponse({ ok: true, sessions }))
+    Promise.all([getPlayerSessions(), getMainKey()])
+      .then(([sessions, mainKey]) => sendResponse({
+        ok: true,
+        mainKey,
+        sessions: sessions.map(session => ({
+          ...session,
+          isMain: Boolean(mainKey) && normalizeVideoUrl(session.url) === mainKey
+        }))
+      }))
       .catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
@@ -63,8 +70,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'add-bookmark') {
-    addBookmark(message.url, message.title, message.time, message.duration)
+    addBookmark(message.url, message.title, message.time, message.duration, message.note)
       .then(item => sendResponse({ ok: true, item }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'set-bookmark-note') {
+    setBookmarkNote(message.id, message.note)
+      .then(result => sendResponse({ ok: true, ...result }))
       .catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
@@ -126,6 +140,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'get-layout-mode') {
+    Promise.all([getLayoutMode(), getFocusRatio(), getMainKey()])
+      .then(([mode, ratio, mainKey]) => sendResponse({ ok: true, mode, ratio, mainKey }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'set-layout-mode') {
+    setLayoutMode(message.mode)
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'set-focus-ratio') {
+    setFocusRatio(message.ratio)
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'set-main-window') {
+    setMainWindow(message.windowId)
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message.type === 'set-floating-controls-visible') {
     setFloatingControlsVisible(Boolean(message.visible))
       .then(result => sendResponse({ ok: true, ...result }))
@@ -158,9 +200,16 @@ async function openDashboard() {
   if (existing?.id) {
     await chrome.tabs.update(existing.id, { active: true });
     if (existing.windowId) {
-      // 先恢复再聚焦：控制中心可能刚被「返回播放网格」最小化过，
-      // 只 focused 不一定能把它从最小化状态带出来。
-      await chrome.windows.update(existing.windowId, { state: 'normal' }).catch(() => {});
+      // 只对「确实处于最小化」的窗口做恢复，而且恢复成它被最小化之前的状态。
+      // 之前是无条件 update 成 state:'normal'，而 normal 的含义是「既不最小化也不最大化」，
+      // 于是原本最大化的浏览器窗口会被降级、缩回它记忆里的小尺寸（表现为缩到屏幕一角）。
+      const win = await chrome.windows.get(existing.windowId).catch(() => null);
+      if (win && win.state === 'minimized') {
+        const previous = await recallDashboardWindowState(existing.windowId);
+        await chrome.windows.update(existing.windowId, {
+          state: previous === 'maximized' ? 'maximized' : 'normal'
+        }).catch(() => {});
+      }
       await chrome.windows.update(existing.windowId, { focused: true }).catch(() => {});
     }
     return;
@@ -283,20 +332,163 @@ async function moveTabsToPlayerWindows(tabIds) {
   return { moved: newSessions.length };
 }
 
-async function arrangePlayerWindows(sessions) {
+// ---------- 窗口布局 ----------
+// 支持四种排布：auto 自动网格 / row 单行横排 / column 单列竖排 / focus 一主多副。
+const LAYOUT_MODES = ['auto', 'row', 'column', 'focus'];
+
+// 主副布局里主窗口的宽度占比（百分比）。留上下限，避免滑杆拖到极端把副窗口压没。
+const FOCUS_RATIO_MIN = 40;
+const FOCUS_RATIO_MAX = 80;
+const FOCUS_RATIO_DEFAULT = 62;
+
+async function getLayoutMode() {
+  const { layoutMode = 'auto' } = await chrome.storage.local.get('layoutMode');
+  return LAYOUT_MODES.includes(layoutMode) ? layoutMode : 'auto';
+}
+
+async function getFocusRatio() {
+  const { focusRatio } = await chrome.storage.local.get('focusRatio');
+  const value = Number(focusRatio);
+  if (!Number.isFinite(value)) return FOCUS_RATIO_DEFAULT;
+  return Math.min(FOCUS_RATIO_MAX, Math.max(FOCUS_RATIO_MIN, Math.round(value)));
+}
+
+async function setFocusRatio(ratio) {
+  const value = Math.min(FOCUS_RATIO_MAX, Math.max(FOCUS_RATIO_MIN, Math.round(Number(ratio) || FOCUS_RATIO_DEFAULT)));
+  await chrome.storage.local.set({ focusRatio: value });
+  const sessions = await getPlayerSessions();
+  if (sessions.length) await arrangePlayerWindows(sessions);
+  return { ratio: value, count: sessions.length };
+}
+
+async function setLayoutMode(mode) {
+  if (!LAYOUT_MODES.includes(mode)) throw new Error('未知的布局方式。');
+  await chrome.storage.local.set({ layoutMode: mode });
+  const sessions = await getPlayerSessions();
+  if (sessions.length) await arrangePlayerWindows(sessions, mode);
+  return { mode, count: sessions.length, ratio: await getFocusRatio() };
+}
+
+// 主窗口用「归一化网址」标识，而不是窗口 id：窗口关掉、下次再打开同一个视频时，
+// 主窗口身份能自动恢复；用窗口 id 的话一变就丢了。
+async function getMainKey() {
+  const { mainKey = '' } = await chrome.storage.local.get('mainKey');
+  return mainKey;
+}
+
+async function setMainWindow(windowId) {
+  const sessions = await getPlayerSessions();
+  const target = sessions.find(session => session.windowId === windowId);
+  if (!target) throw new Error('该窗口已经关闭了。');
+  const key = normalizeVideoUrl(target.url);
+  await chrome.storage.local.set({ mainKey: key });
+  await arrangePlayerWindows(sessions);
+  return { key, title: target.title || target.url };
+}
+
+// 把主窗口挪到数组第 1 位（computeLayout 用第 1 个位置画主画面），其余保持原顺序。
+// 找不到匹配（没设过、或那个视频已关掉）时原样返回，退化成「先开的当主」。
+function withMainFirst(sessions, mainKey) {
+  if (!mainKey) return sessions;
+  const index = sessions.findIndex(session => normalizeVideoUrl(session.url) === mainKey);
+  if (index <= 0) return sessions;
+  return [sessions[index], ...sessions.slice(0, index), ...sessions.slice(index + 1)];
+}
+
+// 把 count 个窗口按指定方式摊到 area 上。
+// 边界统一用 round(i * size / total) 再取差值，保证相邻窗口严丝合缝、不重叠。
+function computeLayout(mode, count, area, ratio = FOCUS_RATIO_DEFAULT) {
+  const rects = [];
+  const edge = (index, total, size) => Math.round(index * size / total);
+  const push = (x, y, w, h) => rects.push({
+    left: Math.round(area.left + x),
+    top: Math.round(area.top + y),
+    width: Math.max(1, Math.round(w)),
+    height: Math.max(1, Math.round(h))
+  });
+
+  if (mode === 'row') {
+    for (let i = 0; i < count; i += 1) {
+      push(edge(i, count, area.width), 0, edge(i + 1, count, area.width) - edge(i, count, area.width), area.height);
+    }
+    return rects;
+  }
+
+  if (mode === 'column') {
+    for (let i = 0; i < count; i += 1) {
+      push(0, edge(i, count, area.height), area.width, edge(i + 1, count, area.height) - edge(i, count, area.height));
+    }
+    return rects;
+  }
+
+  if (mode === 'focus') {
+    // 第 1 个窗口当主画面，宽度占比由滑杆决定（默认 62%），其余在右侧竖排。
+    if (count === 1) { push(0, 0, area.width, area.height); return rects; }
+    const mainWidth = edge(ratio, 100, area.width);
+    push(0, 0, mainWidth, area.height);
+    const side = count - 1;
+    for (let i = 0; i < side; i += 1) {
+      push(mainWidth, edge(i, side, area.height), area.width - mainWidth,
+        edge(i + 1, side, area.height) - edge(i, side, area.height));
+    }
+    return rects;
+  }
+
+  // auto：近似正方形的网格（原有行为）
+  const columns = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / columns);
+  for (let i = 0; i < count; i += 1) {
+    const col = i % columns;
+    const row = Math.floor(i / columns);
+    const x1 = edge(col, columns, area.width);
+    const x2 = edge(col + 1, columns, area.width);
+    const y1 = edge(row, rows, area.height);
+    const y2 = edge(row + 1, rows, area.height);
+    push(x1, y1, x2 - x1, y2 - y1);
+  }
+  return rects;
+}
+
+// 相邻窗口互相压住这么多像素。Windows 上每个窗口都自带 1px 边框和一圈投影，
+// 严格贴边时两道边框 + 投影会在接缝处连成一条很显眼的"间隔"；让它们互相压住几像素，
+// 上面的窗口就会把下面那个的边框盖掉，接缝只剩一条，视觉上紧贴很多。
+// 代价是每个窗口靠内的那一侧会少掉 overlap/2 像素画面。
+const WINDOW_OVERLAP = 12;
+
+function expandForOverlap(rects, area) {
+  const half = Math.round(WINDOW_OVERLAP / 2);
+  return rects.map(rect => {
+    const left = Math.max(area.left, rect.left - half);
+    const top = Math.max(area.top, rect.top - half);
+    const right = Math.min(area.left + area.width, rect.left + rect.width + half);
+    const bottom = Math.min(area.top + area.height, rect.top + rect.height + half);
+    return { left, top, width: right - left, height: bottom - top };
+  });
+}
+
+async function arrangePlayerWindows(sessions, mode) {
   if (!sessions.length) return;
+  const layout = LAYOUT_MODES.includes(mode) ? mode : await getLayoutMode();
+  const ratio = await getFocusRatio();
+  const ordered = withMainFirst(sessions, await getMainKey());
+  if (ordered !== sessions) {
+    sessions = ordered;
+    // 顺序变了要落盘，否则控制中心的列表顺序会和实际窗口排布对不上。
+    await chrome.storage.local.set({ playerSessions: sessions });
+  }
   const displays = await chrome.system.display.getInfo();
   const area = (displays.find(item => item.isPrimary) || displays[0]).workArea;
-  const columns = Math.ceil(Math.sqrt(sessions.length));
-  const rows = Math.ceil(sessions.length / columns);
-  await Promise.allSettled(sessions.map((session, index) => chrome.windows.update(session.windowId, {
-    state: 'normal',
-    left: area.left + Math.floor((index % columns) * area.width / columns),
-    top: area.top + Math.floor(Math.floor(index / columns) * area.height / rows),
-    width: Math.floor(((index % columns) + 1) * area.width / columns) - Math.floor((index % columns) * area.width / columns),
-    height: Math.floor((Math.floor(index / columns) + 1) * area.height / rows) - Math.floor(Math.floor(index / columns) * area.height / rows),
-    focused: index === sessions.length - 1
-  })));
+  const rects = expandForOverlap(computeLayout(layout, sessions.length, area, ratio), area);
+  // 先摆副窗口。主窗口单独放到最后处理 —— 一是避免并行执行时被别人的 state 变更
+  // 抢到前面，二是 chrome.windows.update 的 focused:false 会顺带改变 z 序，
+  // 所以干脆不给副窗口传 focused，只在主窗口上置顶一次。
+  await Promise.all(sessions.slice(1).map((session, offset) => chrome.windows
+    .update(session.windowId, { state: 'normal', ...rects[offset + 1] })
+    .catch(() => {})));
+  // 焦点落在主窗口（第 1 个）而不是最后一个 —— 主副布局下这才是你想看的那块。
+  await chrome.windows.update(sessions[0].windowId, {
+    state: 'normal', ...rects[0], focused: true
+  }).catch(() => {});
 }
 
 async function showPlayerGrid() {
@@ -305,12 +497,15 @@ async function showPlayerGrid() {
   const currentWindow = await chrome.windows.getLastFocused();
   const playerWindowIds = new Set(sessions.map(session => session.windowId));
   if (currentWindow?.id && !playerWindowIds.has(currentWindow.id)) {
+    // 记下最小化之前的窗口状态，切回控制中心时才能原样恢复（最大化 / 普通）。
+    await rememberDashboardWindowState(currentWindow.id, currentWindow.state);
     await chrome.windows.update(currentWindow.id, { state: 'minimized' }).catch(() => {});
   }
   await arrangePlayerWindows(sessions);
   // 依次聚焦每个播放窗口：每次聚焦都会把该窗口提到 Z 序最前，
-  // 这样全部播放窗口都盖在控制中心之上，而不是只把最后一个提前。
-  for (const session of sessions) {
+  // 这样全部播放窗口都盖在控制中心之上。主窗口放最后聚焦，保证它是当前活动窗口。
+  const ordered = withMainFirst(sessions, await getMainKey());
+  for (const session of [...ordered.slice(1), ...ordered.slice(0, 1)]) {
     await chrome.windows.update(session.windowId, { state: 'normal', focused: true }).catch(() => {});
   }
   return { shown: sessions.length };
@@ -334,6 +529,19 @@ async function getPlayerSessions() {
 async function getFloatingControlsVisible() {
   const { floatingControlsVisible = true } = await chrome.storage.local.get('floatingControlsVisible');
   return floatingControlsVisible;
+}
+
+// 「返回播放网格」会把控制中心所在窗口最小化。Chrome 的 window.state 只有
+// normal / minimized / maximized / fullscreen，窗口一旦最小化就查不到它原本是哪种，
+// 所以最小化前先把它记下来，切回控制中心时按记录恢复。
+async function rememberDashboardWindowState(windowId, state) {
+  if (!windowId || !state || state === 'minimized') return;
+  await chrome.storage.local.set({ dashboardWindow: { id: windowId, state } });
+}
+
+async function recallDashboardWindowState(windowId) {
+  const { dashboardWindow } = await chrome.storage.local.get('dashboardWindow');
+  return dashboardWindow && dashboardWindow.id === windowId ? dashboardWindow.state : '';
 }
 
 async function setFloatingControlsVisible(visible) {
@@ -395,7 +603,7 @@ async function getBookmarks(url) {
   return entry ? entry.items : [];
 }
 
-async function addBookmark(url, title, time, duration) {
+async function addBookmark(url, title, time, duration, note) {
   const key = normalizeVideoUrl(url);
   if (!key) throw new Error('缺少视频网址，无法记录书签。');
   const store = await getBookmarkStore();
@@ -408,12 +616,29 @@ async function addBookmark(url, title, time, duration) {
     id: `bm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
     time: seconds,
     duration: Number.isFinite(Number(duration)) && Number(duration) > 0 ? Number(duration) : 0,
+    // 备注默认是空的，之后可以在控制条浮层或控制中心里补。
+    note: typeof note === 'string' ? note.trim().slice(0, 200) : '',
     createdAt: Date.now()
   };
   entry.items = [...entry.items, item].sort((a, b) => a.time - b.time);
   store[key] = entry;
   await chrome.storage.local.set({ bookmarks: store });
   return item;
+}
+
+// 备注是后补的，所以单独开一个只改备注的接口，避免整条书签重建导致 id / 排序变化。
+async function setBookmarkNote(id, note) {
+  const store = await getBookmarkStore();
+  const text = typeof note === 'string' ? note.trim().slice(0, 200) : '';
+  for (const key of Object.keys(store)) {
+    const target = store[key].items.find(item => item.id === id);
+    if (target) {
+      target.note = text;
+      await chrome.storage.local.set({ bookmarks: store });
+      return { id, note: text };
+    }
+  }
+  throw new Error('找不到这条书签，可能已被删除。');
 }
 
 async function removeBookmark(id) {
@@ -463,6 +688,7 @@ async function importBookmarks(groups) {
         id: `bm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
         time: seconds,
         duration,
+        note: typeof (raw && raw.note) === 'string' ? raw.note.trim().slice(0, 200) : '',
         createdAt: Number(raw && raw.createdAt) || Date.now()
       });
       existing.add(`${seconds}|${duration}`);
@@ -775,7 +1001,15 @@ function startTheaterMode(showFloatingControls = true) {
     const separator = document.createElement('span'); separator.textContent = '/'; separator.style.cssText = 'color:#83878c!important;font-size:10px!important;margin:-6px!important';
     const markPanel = document.createElement('div');
     markPanel.setAttribute('data-multi-player-bookmarks', 'true');
-    markPanel.style.cssText = 'position:fixed!important;left:50%!important;bottom:56px!important;z-index:2147483647!important;display:none!important;flex-direction:column!important;gap:4px!important;width:min(320px,calc(100vw - 34px))!important;max-height:250px!important;overflow:auto!important;padding:8px!important;border:1px solid #ffffff2b!important;border-radius:9px!important;background:#121212f2!important;box-shadow:0 8px 30px #000a!important;backdrop-filter:blur(10px)!important;transform:translateX(-50%)!important';
+    markPanel.style.cssText = 'position:fixed!important;right:8px!important;left:auto!important;bottom:74px!important;z-index:2147483647!important;display:none!important;flex-direction:column!important;gap:4px!important;width:min(320px,calc(100vw - 34px))!important;max-height:250px!important;overflow:auto!important;padding:8px!important;border:1px solid #ffffff2b!important;border-radius:9px!important;background:#121212f2!important;box-shadow:0 8px 30px #000a!important;backdrop-filter:blur(10px)!important';
+    // 浮层右边缘对齐控制条右边缘（也就是 ⚑ 按钮那一侧）、底边压在控制条正上方。
+    // 原来是 left:50% + translateX(-50%) 水平居中，面板离按钮有半个控制条那么远，
+    // 鼠标要横移一大段才够得到，点击很别扭。
+    const positionPanel = () => {
+      const rect = bar.getBoundingClientRect();
+      markPanel.style.setProperty('right', `${Math.max(8, Math.round(window.innerWidth - rect.right))}px`, 'important');
+      markPanel.style.setProperty('bottom', `${Math.max(8, Math.round(window.innerHeight - rect.top + 8))}px`, 'important');
+    };
     bar.append(back, toggle, forward, current, separator, total, range, mute, mark, marks);
     document.body.append(bar, markPanel);
     const format = seconds => {
@@ -831,9 +1065,19 @@ function startTheaterMode(showFloatingControls = true) {
         row.style.cssText = 'display:flex!important;align-items:center!important;gap:6px!important';
         const jump = document.createElement('button');
         jump.type = 'button';
-        jump.textContent = format(item.time);
         jump.title = `跳到 ${format(item.time)}`;
-        jump.style.cssText = 'flex:1!important;text-align:left!important;padding:6px 9px!important;border:0!important;border-radius:5px!important;background:#2b2d31!important;color:#f0f0f0!important;font:12px ui-monospace,Consolas,monospace!important;cursor:pointer!important';
+        jump.style.cssText = 'flex:1!important;min-width:0!important;display:flex!important;align-items:center!important;gap:8px!important;text-align:left!important;padding:6px 9px!important;border:0!important;border-radius:5px!important;background:#2b2d31!important;color:#f0f0f0!important;font:12px ui-monospace,Consolas,monospace!important;cursor:pointer!important';
+        const stamp = document.createElement('span');
+        stamp.textContent = format(item.time);
+        stamp.style.cssText = 'flex:none!important';
+        jump.append(stamp);
+        if (item.note) {
+          const note = document.createElement('span');
+          note.textContent = item.note;
+          note.title = item.note;
+          note.style.cssText = 'flex:1!important;min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;color:#9aa0a6!important;font:11px system-ui!important';
+          jump.append(note);
+        }
         jump.addEventListener('click', () => {
           // 时长差异超过 5% 时按百分比换算，避免不同片源版本整体偏移。
           let target = item.time;
@@ -859,9 +1103,48 @@ function startTheaterMode(showFloatingControls = true) {
           bookmarkItems = bookmarkItems.filter(entry => entry.id !== item.id);
           renderBookmarks();
         });
-        row.append(jump, drop);
+        const edit = document.createElement('button');
+        edit.type = 'button';
+        edit.textContent = '✎';
+        edit.setAttribute('aria-label', `编辑 ${format(item.time)} 的备注`);
+        edit.title = '编辑备注';
+        edit.style.cssText = 'width:25px!important;height:25px!important;border:0!important;border-radius:5px!important;background:#2b2d31!important;color:#d7dbe0!important;font:12px system-ui!important;cursor:pointer!important';
+        edit.addEventListener('click', () => startNoteEdit(item, row));
+        row.append(jump, edit, drop);
         markPanel.append(row);
       });
+    };
+
+    // 就地编辑备注：Enter 保存、Esc 取消、失焦也保存。备注可以为空。
+    const startNoteEdit = (item, row) => {
+      let settled = false;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = item.note || '';
+      input.placeholder = '备注（可留空）';
+      input.maxLength = 200;
+      input.setAttribute('aria-label', '书签备注');
+      input.style.cssText = 'flex:1!important;min-width:0!important;height:29px!important;padding:0 9px!important;border:1px solid #4b5563!important;border-radius:5px!important;background:#1b1d21!important;color:#f0f0f0!important;font:12px system-ui!important;outline:none!important';
+      const finish = async save => {
+        if (settled) return;
+        settled = true;
+        if (save) {
+          const note = input.value.trim();
+          if (canMessage()) {
+            await chrome.runtime.sendMessage({ type: 'set-bookmark-note', id: item.id, note }).catch(() => {});
+          }
+          item.note = note;
+        }
+        renderBookmarks();
+      };
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+        else if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+      });
+      input.addEventListener('blur', () => finish(true));
+      row.replaceChildren(input);
+      input.focus();
+      input.select();
     };
     const loadBookmarks = async () => {
       if (!canMessage()) return;
@@ -880,14 +1163,19 @@ function startTheaterMode(showFloatingControls = true) {
       if (result && result.ok) {
         bookmarkItems = [...bookmarkItems, result.item].sort((a, b) => a.time - b.time);
         renderBookmarks();
+        positionPanel();
         markPanel.style.setProperty('display', 'flex', 'important');
       }
     });
     marks.addEventListener('click', () => {
       const isHidden = markPanel.style.display !== 'flex';
       markPanel.style.setProperty('display', isHidden ? 'flex' : 'none', 'important');
-      if (isHidden) loadBookmarks();
+      if (isHidden) {
+        positionPanel();
+        loadBookmarks();
+      }
     });
+    window.addEventListener('resize', positionPanel, { passive: true });
     loadBookmarks();
 
     const reveal = () => { bar.style.opacity = '1'; };
@@ -901,7 +1189,8 @@ function startTheaterMode(showFloatingControls = true) {
       () => bar.remove(),
       () => markPanel.remove(),
       () => events.forEach(event => currentVideo.removeEventListener(event, refresh)),
-      () => document.removeEventListener('mousemove', reveal)
+      () => document.removeEventListener('mousemove', reveal),
+      () => window.removeEventListener('resize', positionPanel)
     );
   }
 }

@@ -81,9 +81,31 @@ async function refreshSessions() {
       if (!closeResult.ok) show(closeResult.error, true);
       await refreshSessions();
     });
-    item.append(thumb, info, remove);
+    item.append(thumb, info, session.isMain ? buildMainBadge() : buildSetMainButton(session), remove);
     list.append(item);
   });
+}
+
+function buildMainBadge() {
+  const badge = document.createElement('span');
+  badge.className = 'main-badge';
+  badge.textContent = '主窗口';
+  badge.title = '主副布局下占主画面，重排后焦点也落在它身上。';
+  return badge;
+}
+
+function buildSetMainButton(session) {
+  const button = document.createElement('button');
+  button.className = 'set-main';
+  button.textContent = '设为主';
+  button.title = '设为主副布局的主画面';
+  button.addEventListener('click', async () => {
+    const result = await chrome.runtime.sendMessage({ type: 'set-main-window', windowId: session.windowId });
+    if (!result.ok) { show(result.error, true); return; }
+    show(`已把「${result.title}」设为主窗口。`);
+    await refreshSessions();
+  });
+  return button;
 }
 
 async function refreshPlaylist() {
@@ -294,6 +316,7 @@ if (isExtension) {
   refreshSessions();
   refreshPlaylist();
   refreshBookmarks();
+  refreshLayoutMode();
 }
 
 // 输入区行号：跟随内容行数变化（与 textarea 的行高、上内边距保持一致才能对齐）。
@@ -304,6 +327,61 @@ function updateUrlGutter() {
 }
 urlsInput.addEventListener('input', updateUrlGutter);
 updateUrlGutter();
+
+// ---------- 窗口排列方式 ----------
+const LAYOUT_LABELS = { auto: '自动', row: '横排', column: '竖排', focus: '主副' };
+const ratioPicker = document.querySelector('#ratio-picker');
+const ratioInput = document.querySelector('#focus-ratio');
+const ratioValue = document.querySelector('#focus-ratio-value');
+
+function applyLayoutModeUI(mode, ratio) {
+  document.querySelectorAll('.layout-option').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
+  });
+  // 只有主副布局才用得上宽度占比，其他模式藏起来免得干扰。
+  ratioPicker.hidden = mode !== 'focus';
+  if (Number.isFinite(ratio)) {
+    ratioInput.value = String(ratio);
+    ratioValue.textContent = `${ratio}%`;
+  }
+}
+
+async function refreshLayoutMode() {
+  if (!isExtension) return;
+  const result = await chrome.runtime.sendMessage({ type: 'get-layout-mode' });
+  if (result.ok) applyLayoutModeUI(result.mode, result.ratio);
+}
+
+document.querySelectorAll('.layout-option').forEach(button => {
+  button.addEventListener('click', async () => {
+    if (!isExtension) return;
+    const mode = button.dataset.mode;
+    const result = await chrome.runtime.sendMessage({ type: 'set-layout-mode', mode });
+    if (!result.ok) { show(result.error, true); return; }
+    applyLayoutModeUI(result.mode, result.ratio);
+    const label = LAYOUT_LABELS[result.mode] || result.mode;
+    show(result.count
+      ? `已按「${label}」重排 ${result.count} 个窗口。`
+      : `排列方式已设为「${label}」，下次打开窗口时生效。`);
+    await refreshSessions();
+  });
+});
+
+// 拖滑杆时每个 input 事件都重排一次窗口会抖，等手停下来再发。
+let ratioTimer = null;
+ratioInput.addEventListener('input', () => {
+  const ratio = Number(ratioInput.value);
+  ratioValue.textContent = `${ratio}%`;
+  if (!isExtension) return;
+  clearTimeout(ratioTimer);
+  ratioTimer = setTimeout(async () => {
+    const result = await chrome.runtime.sendMessage({ type: 'set-focus-ratio', ratio });
+    if (!result.ok) { show(result.error, true); return; }
+    show(result.count
+      ? `主窗口宽度 ${result.ratio}%，已重排 ${result.count} 个窗口。`
+      : `主窗口宽度 ${result.ratio}%，下次打开窗口时生效。`);
+  }, 180);
+});
 
 // ---------- 视频书签 ----------
 const formatStamp = seconds => {
@@ -342,8 +420,18 @@ async function refreshBookmarks() {
       row.className = 'session-item';
       const time = document.createElement('button');
       time.className = 'bookmark-time';
-      time.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l12 8-12 8z"/></svg><span>${formatStamp(item.time)}</span>`;
-      time.title = '跳到该进度';
+      time.title = item.note ? `跳到 ${formatStamp(item.time)} · ${item.note}` : '跳到该进度';
+      const icon = document.createElement('span');
+      icon.className = 'bookmark-play';
+      icon.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l12 8-12 8z"/></svg>';
+      const stamp = document.createElement('span');
+      stamp.className = 'bookmark-stamp';
+      stamp.textContent = formatStamp(item.time);
+      const note = document.createElement('span');
+      note.className = item.note ? 'bookmark-note' : 'bookmark-note bookmark-note-empty';
+      note.textContent = item.note || '添加备注';
+      note.title = item.note || '';
+      time.append(icon, stamp, note);
       time.addEventListener('click', async () => {
         const jump = await chrome.runtime.sendMessage({
           type: 'jump-bookmark', key: group.key, time: item.time, duration: item.duration, url: group.url
@@ -362,11 +450,48 @@ async function refreshBookmarks() {
         await chrome.runtime.sendMessage({ type: 'remove-bookmark', id: item.id });
         await refreshBookmarks();
       });
-      row.append(time, drop);
+      const edit = document.createElement('button');
+      edit.className = 'bookmark-edit';
+      edit.title = '编辑备注';
+      edit.setAttribute('aria-label', `编辑 ${formatStamp(item.time)} 的备注`);
+      edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l10-10-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>';
+      edit.addEventListener('click', () => startNoteEdit(row, item));
+      row.append(time, edit, drop);
       list.append(row);
     });
   });
   return result.groups;
+}
+
+// 就地编辑备注：Enter 保存、Esc 取消、失焦也保存。备注可以为空。
+function startNoteEdit(row, item) {
+  let settled = false;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'bookmark-note-input';
+  input.value = item.note || '';
+  input.placeholder = '备注（可留空）';
+  input.maxLength = 200;
+  input.setAttribute('aria-label', '书签备注');
+  const finish = async save => {
+    if (settled) return;
+    settled = true;
+    if (save) {
+      const note = input.value.trim();
+      const result = await chrome.runtime.sendMessage({ type: 'set-bookmark-note', id: item.id, note });
+      if (!result.ok) { show(result.error, true); return; }
+      show(note ? `已保存备注「${note}」。` : '已清空备注。');
+    }
+    await refreshBookmarks();
+  };
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+    else if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+  row.replaceChildren(input);
+  input.focus();
+  input.select();
 }
 
 document.querySelector('#export-bookmarks').addEventListener('click', async () => {
@@ -381,7 +506,7 @@ document.querySelector('#export-bookmarks').addEventListener('click', async () =
     groups: result.groups.map(group => ({
       url: group.url,
       title: group.title,
-      items: group.items.map(item => ({ time: item.time, duration: item.duration, createdAt: item.createdAt }))
+      items: group.items.map(item => ({ time: item.time, duration: item.duration, note: item.note || '', createdAt: item.createdAt }))
     }))
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });

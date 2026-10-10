@@ -133,6 +133,18 @@
               刷新
             </button>
           </div>
+          <div class="layout-picker" role="group" aria-label="窗口排列方式">
+            <span class="layout-label">排列</span>
+            <button type="button" class="layout-option" data-mode="auto">自动</button>
+            <button type="button" class="layout-option" data-mode="row">横排</button>
+            <button type="button" class="layout-option" data-mode="column">竖排</button>
+            <button type="button" class="layout-option" data-mode="focus">主副</button>
+          </div>
+          <div class="ratio-picker" id="ratio-picker" hidden>
+            <span class="layout-label">主窗口宽度</span>
+            <input type="range" id="focus-ratio" min="40" max="80" step="1" value="62" aria-label="主副布局中主窗口的宽度百分比">
+            <output class="ratio-value" id="focus-ratio-value" for="focus-ratio">62%</output>
+          </div>
           <ul id="session-list"><li class="empty-list">尚未打开视频网页。</li></ul>
           <div class="section-actions">
             <button class="secondary" id="show-player-grid">
