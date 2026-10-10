@@ -21,7 +21,17 @@
 
 ## 安装
 
-当前版本以“已解压的扩展程序”方式安装：
+### 方式一：下载打包好的 `.crx`（推荐）
+
+到 [Releases](https://github.com/Simonhans/multi-window-web-player/releases/latest) 页面下载最新的
+`multi-window-web-player-<版本>.crx`，然后：
+
+1. 打开 Chrome 的 `chrome://extensions`，或 Edge 的 `edge://extensions`。
+2. 开启右上角的“开发者模式”。
+3. 把下载好的 `.crx` 文件拖进这个页面，确认安装。
+4. 建议将扩展固定到浏览器工具栏。
+
+### 方式二：以“已解压的扩展程序”加载（开发用）
 
 1. 打开 Chrome 的 `chrome://extensions`，或 Edge 的 `edge://extensions`。
 2. 开启右上角的“开发者模式”。
@@ -30,6 +40,9 @@
 5. 建议将扩展固定到浏览器工具栏。
 
 修改代码后，在扩展管理页点击“重新加载”即可应用更新。
+
+> 两种方式是**两个独立的扩展**（扩展 ID 不同），书签等本地数据互不相通。
+> 从一种换到另一种之前，建议先在控制中心的“视频书签”里点“导出”备份，装好后再“导入”。
 
 ## 使用方法
 
