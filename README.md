@@ -21,27 +21,43 @@
 
 ## 安装
 
-### 方式一：下载打包好的 `.crx`（推荐）
+到 [Releases](https://github.com/Simonhans/multi-window-web-player/releases/latest) 页面下载，有两个文件可选：
 
-到 [Releases](https://github.com/Simonhans/multi-window-web-player/releases/latest) 页面下载最新的
-`multi-window-web-player-<版本>.crx`，然后：
+| 文件 | 说明 |
+|---|---|
+| `multi-window-web-player-<版本>.zip` | **推荐**。解压后加载，一定能装上 |
+| `multi-window-web-player-<版本>.crx` | 一键安装包，但受 Chrome 政策限制，见下 |
 
-1. 打开 Chrome 的 `chrome://extensions`，或 Edge 的 `edge://extensions`。
-2. 开启右上角的“开发者模式”。
-3. 把下载好的 `.crx` 文件拖进这个页面，确认安装。
-4. 建议将扩展固定到浏览器工具栏。
+### 方式一：`.zip`（推荐，通用）
 
-### 方式二：以“已解压的扩展程序”加载（开发用）
-
-1. 打开 Chrome 的 `chrome://extensions`，或 Edge 的 `edge://extensions`。
-2. 开启右上角的“开发者模式”。
-3. 点击“加载已解压的扩展程序”。
-4. 选择本项目根目录，即包含 `manifest.json` 的 `web-player-windows` 文件夹。
+1. 下载并**解压**到任意目录（里面应该直接能看到 `manifest.json`）。
+2. 打开 Chrome 的 `chrome://extensions`，或 Edge 的 `edge://extensions`。
+3. 打开右上角的**开发者模式**。
+4. 点“**加载已解压的扩展程序**”，选择解压出来的那个目录。
 5. 建议将扩展固定到浏览器工具栏。
+
+### 方式二：`.crx`（需要开发者模式）
+
+1. 打开 `chrome://extensions`，**先打开右上角的开发者模式**。
+2. 把下载好的 `.crx` 文件**拖进**这个页面。
+
+> **如果提示「程序包无效：crx_required_proof_missing」，是因为开发者模式没开。**
+>
+> Chrome 从 73 版起限制非 Chrome 网上应用店来源的扩展。`.crx` 只有本项目的自签名（`release-key.pem`），
+> 缺少 Google 的签名证明，**非开发者模式下必然被拒** —— 这是浏览器的政策，重新打包解决不了。
+> 开发者模式打开后可以安装，但会显示一条红色警告，属正常现象。
+>
+> 若开了开发者模式仍装不上，请改用上面的 `.zip` 方式。想让 `.crx` 做到“双击即装”，
+> 只有上架 Chrome 网上应用店，或用企业策略（`ExtensionInstallAllowlist` + `ExtensionInstallSources`）放行。
+
+### 方式三：直接从源码加载（开发用）
+
+1. 打开 `chrome://extensions`，开启“开发者模式”。
+2. 点击“加载已解压的扩展程序”，选择本项目根目录（即包含 `manifest.json` 的 `web-player-windows` 文件夹）。
 
 修改代码后，在扩展管理页点击“重新加载”即可应用更新。
 
-> 两种方式是**两个独立的扩展**（扩展 ID 不同），书签等本地数据互不相通。
+> 三种方式是**彼此独立的扩展**（扩展 ID 不同），书签等本地数据互不相通。
 > 从一种换到另一种之前，建议先在控制中心的“视频书签”里点“导出”备份，装好后再“导入”。
 
 ## 使用方法
