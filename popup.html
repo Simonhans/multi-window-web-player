@@ -21,6 +21,39 @@
       当前页面是从本地文件直接打开的，无法取得浏览器扩展权限。请在扩展管理页加载整个 <code>web-player-windows</code> 文件夹后，从浏览器工具栏打开本面板。
     </div>
 
+    <section class="card window-actions" aria-label="播放窗口操作">
+      <div class="window-actions-head">
+        <span class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg></span>
+        <div class="card-title">
+          <strong>播放窗口操作</strong>
+          <p>重新平铺或一次性关闭全部独立窗口</p>
+        </div>
+      </div>
+      <div class="window-actions-grid">
+        <button class="action-tile action-tile--primary" id="show-player-grid">
+          <span class="action-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg></span>
+          <span class="action-text">
+            <b>返回播放网格</b>
+            <small>按屏幕网格重新平铺所有窗口</small>
+          </span>
+        </button>
+        <button class="action-tile action-tile--neutral" id="restore-tabs">
+          <span class="action-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M12 12v6M9.5 15.5L12 18l2.5-2.5"/></svg></span>
+          <span class="action-text">
+            <b>还原到浏览器标签页</b>
+            <small>搬回标签栏，恢复网页原样</small>
+          </span>
+        </button>
+        <button class="action-tile action-tile--danger" id="close-all-windows">
+          <span class="action-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+          <span class="action-text">
+            <b>关闭全部窗口</b>
+            <small>结束所有独立播放器窗口</small>
+          </span>
+        </button>
+      </div>
+    </section>
+
     <div class="columns">
       <div class="col">
         <section class="card" aria-label="添加视频网页">
@@ -80,22 +113,6 @@
       </div>
 
       <div class="col">
-        <section class="card" aria-label="当前网页">
-          <div class="card-head">
-            <span class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18"/></svg></span>
-            <div class="card-title"><strong>当前网页</strong></div>
-          </div>
-          <div class="section-actions">
-            <button class="tile" id="theater-current">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 15v5h-5M4 15v5h5M20 9V4h-5"/></svg>
-              <span class="tile-text"><b>铺满当前网页播放器</b><small>将当前网页以铺满方式播放</small></span>
-            </button>
-            <button class="tile" id="restore-current">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10V4h6"/><path d="M4 10a9 9 0 1 0 3-6"/></svg>
-              <span class="tile-text"><b>还原</b><small>恢复到原始窗口大小</small></span>
-            </button>
-          </div>
-        </section>
 
         <section class="card group-controls" aria-label="统一控制">
           <div class="card-head">
@@ -121,7 +138,7 @@
             <span id="progress-value">0%</span>
           </label>
           <input id="master-seek" type="range" min="0" max="100" value="0" aria-label="将所有视频跳转到相同百分比">
-          <p class="progress-note">播放时，所有可识别视频会跳到各自时长的相同百分比。</p>
+          <p class="progress-note">所有视频会跳到各自时长的相同百分比。</p>
         </section>
 
         <section class="card card--grow session-section" aria-label="已打开的视频窗口">
@@ -146,21 +163,36 @@
             <output class="ratio-value" id="focus-ratio-value" for="focus-ratio">62%</output>
           </div>
           <ul id="session-list"><li class="empty-list">尚未打开视频网页。</li></ul>
-          <div class="section-actions">
-            <button class="secondary" id="show-player-grid">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
-              <span>返回播放网格</span>
-            </button>
-            <button class="danger" id="close-all-windows">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-              <span>关闭全部窗口</span>
-            </button>
-          </div>
         </section>
 
       </div>
 
       <div class="col">
+
+        <section class="card control-bar-setting" aria-label="悬浮控制条设置">
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg></span>
+            <div class="card-title">
+              <strong>窗口悬浮控制条</strong>
+              <p>按住 Ctrl 操作可同步全部窗口。</p>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-text">
+              <strong>显示控制条</strong>
+              <p>关闭后播放窗口里完全不出现控制条。</p>
+            </div>
+            <button class="switch" id="toggle-floating-controls" role="switch" aria-checked="true" aria-label="窗口悬浮控制条开关"><span></span></button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-text">
+              <strong>播放时自动隐藏</strong>
+              <p>控制条平时收起，鼠标移入窗口才出现。</p>
+            </div>
+            <button class="switch" id="toggle-auto-hide-controls" role="switch" aria-checked="true" aria-label="播放时自动隐藏控制条开关"><span></span></button>
+          </div>
+        </section>
+
         <section class="card card--grow bookmark-section" aria-label="视频书签">
           <div class="card-head">
             <span class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-5-6 5z"/></svg></span>
@@ -181,16 +213,7 @@
           <input type="file" id="bookmark-file" accept=".json,application/json" hidden>
         </section>
 
-        <section class="card control-bar-setting" aria-label="悬浮控制条设置">
-          <div class="card-head">
-            <span class="card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg></span>
-            <div class="card-title">
-              <strong>窗口悬浮控制条</strong>
-              <p>默认显示，按住 Ctrl 操作可同步全部窗口。</p>
-            </div>
-          </div>
-          <button class="switch" id="toggle-floating-controls" role="switch" aria-checked="true" aria-label="窗口悬浮控制条开关"><span></span></button>
-        </section>
+
       </div>
     </div>
 
@@ -198,7 +221,10 @@
     <footer>
       <span class="foot-item">按 <kbd>Esc</kbd> 或点击桌面端退出播放窗口</span>
       <span class="foot-dot"></span>
-      <span class="foot-item"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Y</kbd> 切换控制中心/平铺播放网格</span>
+      <span class="foot-item">
+        <button class="shortcut-key" id="shortcut-capture" title="点击后按下新的组合键即可修改"></button>
+        切换控制中心/平铺播放网格
+      </span>
     </footer>
   </main>
   <script src="popup.js"></script>

@@ -13,16 +13,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === 'theater-current-tab') {
-    getFloatingControlsVisible().then(visible => runInCurrentTab(startTheaterMode, [visible]))
-      .then(result => sendResponse({ ok: true, result }))
-      .catch(error => sendResponse({ ok: false, error: error.message }));
-    return true;
-  }
-
-  if (message.type === 'restore-current-tab') {
-    runInCurrentTab(stopTheaterMode)
-      .then(result => sendResponse({ ok: true, result }))
+  if (message.type === 'restore-player-tabs') {
+    restorePlayerTabsToBrowser()
+      .then(result => sendResponse({ ok: true, ...result }))
       .catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
@@ -175,6 +168,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'set-auto-hide-controls') {
+    setAutoHideControls(Boolean(message.autoHide))
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'get-toggle-shortcut') {
+    getToggleShortcut()
+      .then(shortcut => sendResponse({ ok: true, shortcut }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'set-toggle-shortcut') {
+    setToggleShortcut(message.shortcut)
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'toggle-dashboard-grid') {
+    toggleDashboardAndGrid()
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message.type === 'show-player-grid') {
     showPlayerGrid()
       .then(result => sendResponse({ ok: true, ...result }))
@@ -217,16 +238,23 @@ async function openDashboard() {
   await chrome.tabs.create({ url: dashboardUrl, active: true });
 }
 
+let lastToggleAt = 0;
 async function toggleDashboardAndGrid() {
+  // 浏览器级快捷键（manifest 里的 commands）和页面内自定义快捷键可能同时命中同一次按键
+  // —— 取决于 Chrome 有没有把按键吞掉。400ms 内的重复调用当作同一次，避免连切两下。
+  const now = Date.now();
+  if (now - lastToggleAt < 400) return { skipped: true };
+  lastToggleAt = now;
   const dashboardUrl = chrome.runtime.getURL('dashboard.html');
   const [dashboard] = await chrome.tabs.query({ url: dashboardUrl });
   const currentWindow = await chrome.windows.getLastFocused();
   const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (dashboard?.id && dashboard.windowId === currentWindow?.id && activeTab?.id === dashboard.id) {
     await showPlayerGrid();
-    return;
+    return { view: 'grid' };
   }
   await openDashboard();
+  return { view: 'dashboard' };
 }
 
 async function getImportableTabs() {
@@ -271,7 +299,7 @@ function updatePlaylistBadge(count) {
 async function openPlayerWindows(urls) {
   const opened = [];
   const newSessions = [];
-  const floatingControlsVisible = await getFloatingControlsVisible();
+  const [floatingControlsVisible, autoHideControls, toggleShortcut] = await getTheaterOptions();
 
   for (let index = 0; index < urls.length; index += 1) {
     const windowInfo = await chrome.windows.create({
@@ -288,7 +316,7 @@ async function openPlayerWindows(urls) {
         await chrome.scripting.executeScript({
           target: { tabId: tab.id, allFrames: true },
           func: startTheaterMode,
-          args: [floatingControlsVisible]
+          args: [floatingControlsVisible, autoHideControls, toggleShortcut]
         });
       } catch (_) {
         // 页面可能仍在加载，或浏览器不允许向该页面注入脚本。
@@ -305,7 +333,7 @@ async function openPlayerWindows(urls) {
 }
 
 async function moveTabsToPlayerWindows(tabIds) {
-  const floatingControlsVisible = await getFloatingControlsVisible();
+  const [floatingControlsVisible, autoHideControls, toggleShortcut] = await getTheaterOptions();
   const newSessions = [];
   for (const tabId of [...new Set(tabIds)]) {
     const tab = await chrome.tabs.get(tabId);
@@ -317,7 +345,7 @@ async function moveTabsToPlayerWindows(tabIds) {
         await chrome.scripting.executeScript({
           target: { tabId: movedTab.id, allFrames: true },
           func: startTheaterMode,
-          args: [floatingControlsVisible]
+          args: [floatingControlsVisible, autoHideControls, toggleShortcut]
         });
       } catch (_) {
         // 受保护页面或播放器框架可能拒绝注入，标签本身仍已成功移动。
@@ -547,18 +575,108 @@ async function recallDashboardWindowState(windowId) {
 async function setFloatingControlsVisible(visible) {
   await chrome.storage.local.set({ floatingControlsVisible: visible });
   const sessions = await getPlayerSessions();
+  const [autoHide, shortcut] = [await getAutoHideControls(), await getToggleShortcut()];
   await Promise.allSettled(sessions.map(session => chrome.scripting.executeScript({
     target: { tabId: session.tabId, allFrames: true },
     func: startTheaterMode,
-    args: [visible]
+    args: [visible, autoHide, shortcut]
   })));
   return { visible };
+}
+
+// 播放时是否自动收起悬浮控制条（鼠标移入窗口才出现）。默认开启。
+async function getAutoHideControls() {
+  const { autoHideControls = true } = await chrome.storage.local.get('autoHideControls');
+  return autoHideControls !== false;
+}
+
+async function setAutoHideControls(autoHide) {
+  const value = autoHide !== false;
+  await chrome.storage.local.set({ autoHideControls: value });
+  const sessions = await getPlayerSessions();
+  const [visible, shortcut] = [await getFloatingControlsVisible(), await getToggleShortcut()];
+  await Promise.allSettled(sessions.map(session => chrome.scripting.executeScript({
+    target: { tabId: session.tabId, allFrames: true },
+    func: startTheaterMode,
+    args: [visible, value, shortcut]
+  })));
+  return { autoHide: value };
+}
+
+// startTheaterMode 的三个参数总是成对使用，统一取一次避免各调用点写重复代码。
+async function getTheaterOptions() {
+  return [await getFloatingControlsVisible(), await getAutoHideControls(), await getToggleShortcut()];
+}
+
+// 控制中心 / 播放网格的切换快捷键。注意：Chrome 的 commands.suggested_key 是 manifest 里写死的，
+// 运行时改不了，所以这里维护的是扩展自己在播放窗口和控制中心内监听的快捷键；
+// manifest 里那个 Ctrl+Shift+Y 仍然在任意页面可用，用户也可以去 chrome://extensions/shortcuts 改。
+const DEFAULT_TOGGLE_SHORTCUT = 'Ctrl+Shift+Y';
+
+async function getToggleShortcut() {
+  const { toggleShortcut } = await chrome.storage.local.get('toggleShortcut');
+  return typeof toggleShortcut === 'string' && toggleShortcut.trim() ? toggleShortcut.trim() : DEFAULT_TOGGLE_SHORTCUT;
+}
+
+async function setToggleShortcut(spec) {
+  const value = String(spec || '').trim() || DEFAULT_TOGGLE_SHORTCUT;
+  await chrome.storage.local.set({ toggleShortcut: value });
+  const sessions = await getPlayerSessions();
+  const [visible, autoHide] = await getTheaterOptions();
+  await Promise.allSettled(sessions.map(session => chrome.scripting.executeScript({
+    target: { tabId: session.tabId, allFrames: true },
+    func: startTheaterMode,
+    args: [visible, autoHide, value]
+  })));
+  return { shortcut: value };
 }
 
 async function closePlayerWindow(windowId) {
   await chrome.windows.remove(windowId);
   const sessions = await getPlayerSessions();
   await chrome.storage.local.set({ playerSessions: sessions.filter(session => session.windowId !== windowId) });
+}
+
+// 把独立播放窗口里的视频标签搬回浏览器标签栏，并还原页面原样。
+// 和 closeAllPlayerWindows 的区别：那个是直接关掉，这个是把标签留下来。
+async function restorePlayerTabsToBrowser() {
+  const sessions = await getPlayerSessions();
+  if (!sessions.length) return { restored: 0 };
+
+  // 落点优先用控制中心所在的窗口 —— 用户就在那儿点的按钮，标签落回他眼前的窗口最自然。
+  const dashboardUrl = chrome.runtime.getURL('dashboard.html');
+  const [dashboardTab] = await chrome.tabs.query({ url: dashboardUrl });
+  let targetWindowId = dashboardTab?.windowId;
+  if (!targetWindowId) {
+    const lastFocused = await chrome.windows.getLastFocused().catch(() => null);
+    targetWindowId = lastFocused?.id;
+  }
+  if (!targetWindowId) {
+    const created = await chrome.windows.create({ focused: false });
+    targetWindowId = created?.id;
+  }
+  if (!targetWindowId) throw new Error('找不到可以接收标签的浏览器窗口。');
+
+  let restored = 0;
+  for (const session of sessions) {
+    try {
+      // 搬到目标窗口末尾。标签搬走后播放窗口就空了，Chrome 会自行关掉它。
+      await chrome.tabs.move(session.tabId, { windowId: targetWindowId, index: -1 });
+      restored += 1;
+    } catch (_) {
+      // 标签可能已经被手动关掉了，跳过即可。
+    }
+    // 页面还原成普通网页：撤销铺满、移除注入的控制条与退出按钮。
+    await chrome.scripting.executeScript({
+      target: { tabId: session.tabId, allFrames: true },
+      func: stopTheaterMode
+    }).catch(() => {});
+  }
+
+  // 兜底：万一有播放窗口没被自动关掉（例如里面还有别的标签），补一刀。
+  await Promise.allSettled(sessions.map(session => chrome.windows.remove(session.windowId).catch(() => {})));
+  await chrome.storage.local.set({ playerSessions: [] });
+  return { restored };
 }
 
 async function closeAllPlayerWindows() {
@@ -819,12 +937,6 @@ function countFound(outcomes) {
   }, 0);
 }
 
-async function runInCurrentTab(func, args = []) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) throw new Error('没有找到当前网页标签。');
-  return chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func, args });
-}
-
 function waitForTabLoad(tabId, timeout = 12000) {
   return new Promise(resolve => {
     const timer = setTimeout(done, timeout);
@@ -841,8 +953,10 @@ function waitForTabLoad(tabId, timeout = 12000) {
 }
 
 // 此函数会被 Chrome 序列化到目标网页中，不能引用扩展环境的变量。
-function startTheaterMode(showFloatingControls = true) {
+function startTheaterMode(showFloatingControls = true, autoHideControls = true, toggleShortcut = '') {
   const stateKey = '__multiWindowWebPlayerState__';
+  const nextAutoHide = autoHideControls !== false;
+  const nextShortcut = String(toggleShortcut || '').trim();
   if (window[stateKey]?.active) {
     const currentVideo = [...document.querySelectorAll('video')].filter(video => {
       const rect = video.getBoundingClientRect();
@@ -852,9 +966,32 @@ function startTheaterMode(showFloatingControls = true) {
       const br = b.getBoundingClientRect();
       return br.width * br.height - ar.width * ar.height;
     })[0];
+    window[stateKey].autoHide = nextAutoHide;
+    // 快捷键变了就换掉旧的监听（控制条那边则按 autoHide 变化决定是否重建）。
+    if (window[stateKey].toggleShortcut !== nextShortcut) {
+      if (Array.isArray(window[stateKey].shortcutCleanup)) {
+        window[stateKey].shortcutCleanup.forEach(cleanup => {
+          try { cleanup(); } catch (_) { /* 单个清理失败不该影响重装 */ }
+        });
+      }
+      installToggleShortcut(window[stateKey], nextShortcut);
+    }
     const existingControls = document.querySelector('[data-multi-player-controls]');
-    if (existingControls) existingControls.style.setProperty('display', showFloatingControls ? 'flex' : 'none', 'important');
-    else if (currentVideo && showFloatingControls) installPlaybackControls(currentVideo, window[stateKey]);
+    // 自动隐藏开关变了就拆掉重建：显隐逻辑在创建时就把值收进了闭包，就地改容易漏。
+    if (existingControls && existingControls.dataset.autoHide !== String(nextAutoHide)) {
+      // 重建前先把旧控制条挂在 document / window 上的监听收干净，
+      // 否则每切换一次设置就会留下一批指向已删除元素的监听器。
+      if (Array.isArray(window[stateKey].controlsCleanup)) {
+        window[stateKey].controlsCleanup.forEach(cleanup => {
+          try { cleanup(); } catch (_) { /* 单个清理失败不该影响重建 */ }
+        });
+      }
+      if (currentVideo && showFloatingControls) installPlaybackControls(currentVideo, window[stateKey]);
+    } else if (existingControls) {
+      existingControls.style.setProperty('display', showFloatingControls ? 'flex' : 'none', 'important');
+    } else if (currentVideo && showFloatingControls) {
+      installPlaybackControls(currentVideo, window[stateKey]);
+    }
     return { status: 'already-active' };
   }
 
@@ -941,17 +1078,55 @@ function startTheaterMode(showFloatingControls = true) {
   css(box, 'max-width', 'none'); css(box, 'max-height', 'none'); css(box, 'margin', '0'); css(box, 'padding', '0');
   css(box, 'transform', 'none'); css(box, 'z-index', '2147483646'); css(box, 'overflow', 'hidden'); css(box, 'background', '#000');
   css(document.documentElement, 'overflow', 'hidden'); css(document.body, 'overflow', 'hidden');
-  const state = { active: true, saved, cleanup: [] };
+  const state = { active: true, saved, cleanup: [], autoHide: nextAutoHide, toggleShortcut: nextShortcut };
   window[stateKey] = state;
   installExitButton(state);
   installPlaybackControls(video, state);
+  installToggleShortcut(state, nextShortcut);
   // 这里刻意不调用 play()。扩展用 chrome.windows.create 开出的窗口没有用户手势，
   // 浏览器的自动播放策略会以 NotAllowedError 拒绝带声音的 play()；静音降级又会让用户
   // 莫名其妙听不到声音。所以交给用户点页面自己的播放按钮，或用悬浮控制条上的播放键。
   return { status: 'video-expanded', tag: box.tagName };
 
-  function installExitButton(currentState) {
-    const button = document.createElement('button');
+  // 自定义切换快捷键。Chrome 的 commands.suggested_key 写死在 manifest 里、运行时改不了，
+  // 所以这里在播放窗口内自己监听一份，让用户能在控制中心里改。
+  // 这段必须完全自包含 —— startTheaterMode 会被序列化后注入目标页面，
+  // 引用外层作用域的任何东西在页面里都会是 undefined。
+  function installToggleShortcut(currentState, spec) {
+    if (!spec) return;
+    const normalize = event => {
+      const raw = String(event.key || '');
+      if (raw === ' ') return 'Space';
+      if (raw === 'Escape') return 'Esc';
+      return raw.length === 1 ? raw.toUpperCase() : raw;
+    };
+    const matches = event => {
+      const parts = String(spec).split('+').map(part => part.trim()).filter(Boolean);
+      if (parts.length < 2) return false;
+      const key = parts[parts.length - 1].toUpperCase();
+      const mods = parts.slice(0, -1).map(part => part.toLowerCase());
+      const wantCtrl = mods.includes('ctrl') || mods.includes('control');
+      const wantShift = mods.includes('shift');
+      const wantAlt = mods.includes('alt');
+      const wantMeta = mods.includes('meta') || mods.includes('cmd') || mods.includes('command');
+      if (event.ctrlKey !== wantCtrl || event.shiftKey !== wantShift) return false;
+      if (event.altKey !== wantAlt || event.metaKey !== wantMeta) return false;
+      return normalize(event).toUpperCase() === key;
+    };
+    const onKey = event => {
+      if (!matches(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ type: 'toggle-dashboard-grid' }).catch(() => {});
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    currentState.shortcutCleanup = [() => document.removeEventListener('keydown', onKey, true)];
+    currentState.cleanup.push(...currentState.shortcutCleanup);
+  }
+
+  function installExitButton(currentState) {    const button = document.createElement('button');
     button.textContent = '退出铺满  Esc';
     button.type = 'button';
     button.setAttribute('aria-label', '退出播放器铺满模式');
@@ -979,6 +1154,20 @@ function startTheaterMode(showFloatingControls = true) {
     bar.setAttribute('aria-label', '视频播放控制');
     bar.style.cssText = 'position:fixed!important;left:50%!important;bottom:18px!important;z-index:2147483647!important;display:flex!important;align-items:center!important;gap:9px!important;width:min(620px,calc(100vw - 34px))!important;padding:9px 11px!important;border:1px solid #ffffff3b!important;border-radius:9px!important;background:#121212e8!important;box-shadow:0 8px 30px #000a!important;backdrop-filter:blur(10px)!important;transform:translateX(-50%)!important;opacity:.22!important;transition:opacity .18s!important';
     if (!showFloatingControls) bar.style.setProperty('display', 'none', 'important');
+    // 自动隐藏模式记在 DOM 上，便于「开关变了就拆掉重建」那条路径判断是否需要重装。
+    bar.dataset.autoHide = String(Boolean(currentState.autoHide));
+    const autoHide = () => bar.dataset.autoHide === 'true';
+    // 自动隐藏：平时完全收起（透明 + 不接收点击，否则会挡住视频上的操作），
+    // 鼠标进到窗口里才出现。关闭该模式时保持原来的「半透明常显、悬停变亮」。
+    const setBarVisible = visible => {
+      if (autoHide()) {
+        bar.style.setProperty('opacity', visible ? '1' : '0', 'important');
+        bar.style.setProperty('pointer-events', visible ? 'auto' : 'none', 'important');
+      } else {
+        bar.style.setProperty('pointer-events', 'auto', 'important');
+        bar.style.setProperty('opacity', visible ? '1' : '.22', 'important');
+      }
+    };
     const makeButton = (text, label) => {
       const button = document.createElement('button');
       button.type = 'button'; button.textContent = text; button.setAttribute('aria-label', label);
@@ -1178,20 +1367,57 @@ function startTheaterMode(showFloatingControls = true) {
     window.addEventListener('resize', positionPanel, { passive: true });
     loadBookmarks();
 
-    const reveal = () => { bar.style.opacity = '1'; };
-    const dim = () => { if (!bar.matches(':hover')) bar.style.opacity = '.22'; };
-    bar.addEventListener('mouseenter', reveal); bar.addEventListener('mouseleave', dim);
+    // 鼠标停住不动超过这么久就自动淡出，不用非得把指针移出窗口。
+    const IDLE_HIDE_MS = 3000;
+    let idleTimer = null;
+    const cancelIdle = () => { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } };
+    const scheduleIdle = () => {
+      cancelIdle();
+      if (!autoHide()) return;
+      idleTimer = setTimeout(() => {
+        idleTimer = null;
+        // 鼠标还停在控制条或书签浮层上、或浮层开着的时候不收，否则会点不到。
+        if (bar.matches(':hover') || markPanel.matches(':hover') || markPanel.style.display === 'flex') {
+          scheduleIdle();
+          return;
+        }
+        dim(true);
+      }, IDLE_HIDE_MS);
+    };
+    const reveal = () => { setBarVisible(true); scheduleIdle(); };
+    // force：鼠标离开整个窗口或空闲超时时用。那一刻 :hover 可能还没更新，不能靠它判断。
+    const dim = (force = false) => {
+      if (!force && bar.matches(':hover')) return;
+      cancelIdle();
+      setBarVisible(false);
+      // 自动隐藏时，控制条一收起就把书签浮层一并收掉，免得留个孤零零的浮层挂在画面上。
+      if (autoHide()) markPanel.style.setProperty('display', 'none', 'important');
+    };
+    const onWindowLeave = () => dim(true);
+    bar.addEventListener('mouseenter', reveal);
+    // 自动隐藏模式下，鼠标离开控制条不收起：往书签浮层移的时候会经过中间那道空隙，
+    // 那时会被误判成"离开"，把浮层一起收掉导致点不到。只在离开整个窗口或空闲超时时才收。
+    bar.addEventListener('mouseleave', () => { if (!autoHide()) dim(); });
     document.addEventListener('mousemove', reveal, { passive: true });
+    document.documentElement.addEventListener('mouseleave', onWindowLeave);
+    // 两种模式的初始态都是"收起"：自动隐藏时完全透明，非自动隐藏时是半透明常显（opacity .22）。
+    setBarVisible(false);
     const events = ['timeupdate', 'loadedmetadata', 'durationchange', 'play', 'pause', 'volumechange'];
     events.forEach(event => currentVideo.addEventListener(event, refresh));
     refresh();
-    currentState.cleanup.push(
+    // 控制条自己的一套清理动作单独存一份：切换自动隐藏设置时要先跑一遍再重建，
+    // 不能只 push 进 currentState.cleanup（那里还混着退出按钮等与本次重建无关的清理）。
+    const controlsCleanup = [
       () => bar.remove(),
       () => markPanel.remove(),
       () => events.forEach(event => currentVideo.removeEventListener(event, refresh)),
       () => document.removeEventListener('mousemove', reveal),
-      () => window.removeEventListener('resize', positionPanel)
-    );
+      () => document.documentElement.removeEventListener('mouseleave', onWindowLeave),
+      () => window.removeEventListener('resize', positionPanel),
+      () => cancelIdle()
+    ];
+    currentState.controlsCleanup = controlsCleanup;
+    currentState.cleanup.push(...controlsCleanup);
   }
 }
 

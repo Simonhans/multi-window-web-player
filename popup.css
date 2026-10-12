@@ -25,7 +25,7 @@
 *{box-sizing:border-box}
 html,body{height:100%}
 body{width:100%;margin:0;overflow:hidden;background:var(--bg)}
-main{height:100%;max-width:1180px;margin:0 auto;padding:20px 22px 14px;display:flex;flex-direction:column;gap:14px}
+main{height:100%;max-width:1180px;margin:0 auto;padding:16px 22px 12px;display:flex;flex-direction:column;gap:12px}
 
 header{flex:none;display:flex;gap:14px;align-items:center}
 .mark{flex:none;display:grid;place-items:center;width:46px;height:46px;border-radius:13px;background:linear-gradient(145deg,#60a5fa,#4f46e5 55%,#7c3aed);box-shadow:0 6px 22px #4f46e540}
@@ -40,7 +40,7 @@ header p{margin:0;color:var(--text-2);font-size:12.5px}
 .columns{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:max-content;gap:14px;overflow:auto}
 .col{display:flex;flex-direction:column;gap:14px;min-height:0;min-width:0}
 
-.card{flex:none;min-width:0;background:linear-gradient(180deg,#141a24,#111620);border:1px solid var(--line);border-radius:var(--r);padding:16px}
+.card{flex:none;min-width:0;background:linear-gradient(180deg,#141a24,#111620);border:1px solid var(--line);border-radius:var(--r);padding:14px}
 .card--grow{flex:1 1 auto;min-height:150px;display:flex;flex-direction:column}
 .card--grow > ul{flex:1;min-height:0;max-height:none}
 .import-section{border-color:#24405c;background:linear-gradient(180deg,#121a26,#0f1620)}
@@ -59,9 +59,9 @@ header p{margin:0;color:var(--text-2);font-size:12.5px}
 .editor{display:flex;background:var(--field);border:1px solid var(--line-2);border-radius:var(--r-sm);overflow:hidden;transition:border-color .18s,box-shadow .18s}
 .editor:focus-within{border-color:#3b82f6;box-shadow:0 0 0 3px #3b82f624}
 .gutter{flex:none;padding:12px 10px 12px 12px;color:var(--text-3);font:12px/1.75 ui-monospace,"Cascadia Code",monospace;text-align:right;user-select:none;white-space:pre}
-#urls{flex:1;min-width:0;height:126px;padding:12px 12px 12px 4px;border:0;outline:none;resize:none;background:transparent;color:#dbe4ef;font:12px/1.75 ui-monospace,"Cascadia Code",monospace}
+#urls{flex:1;min-width:0;height:104px;padding:12px 12px 12px 4px;border:0;outline:none;resize:none;background:transparent;color:#dbe4ef;font:12px/1.75 ui-monospace,"Cascadia Code",monospace}
 #urls::placeholder{color:#4b5768}
-.hint{margin:9px 0 13px;color:var(--text-3);font-size:11.5px;line-height:1.55}
+.hint{margin:8px 0 11px;color:var(--text-3);font-size:11.5px;line-height:1.55}
 
 button{font-family:inherit;cursor:pointer;transition:filter .18s,background .18s,border-color .18s,color .18s,transform .07s}
 button:active:not(:disabled){transform:translateY(1px)}
@@ -100,14 +100,14 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .section-actions > button{flex:1;min-width:0}
 .section-actions .primary,.section-actions .ghost{width:auto;margin-top:0}
 
-.progress-label{display:flex;align-items:center;justify-content:space-between;margin-top:15px;font-size:12px;font-weight:600;color:var(--text-2)}
+.progress-label{display:flex;align-items:center;justify-content:space-between;margin-top:12px;font-size:12px;font-weight:600;color:var(--text-2)}
 .progress-title{display:inline-flex;align-items:center;gap:7px}
 .progress-title svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 #progress-value{font-family:ui-monospace,"Cascadia Code",monospace;color:var(--green-1)}
 #master-seek{-webkit-appearance:none;appearance:none;width:100%;height:6px;margin:11px 0 0;border-radius:3px;background:#1b2430;outline:none;cursor:pointer}
 #master-seek::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--green-1);border:3px solid #0f1620;box-shadow:0 0 10px #4ade80cc;cursor:pointer;transition:transform .12s}
 #master-seek::-webkit-slider-thumb:hover{transform:scale(1.15)}
-.progress-note{margin:9px 0 0;color:var(--text-3);font-size:11px;line-height:1.5}
+.progress-note{margin:7px 0 0;color:var(--text-3);font-size:11px;line-height:1.5}
 
 #session-list,#playlist-list{list-style:none;margin:0;padding:0;max-height:134px;overflow:auto}
 #session-list::-webkit-scrollbar,#playlist-list::-webkit-scrollbar,#import-list::-webkit-scrollbar,.columns::-webkit-scrollbar{width:8px}
@@ -172,12 +172,48 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .import-url{display:block;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--text-3);font:10.5px ui-monospace,"Cascadia Code",monospace}
 .import-row:focus-within{background:#161e29}
 
-.control-bar-setting{display:flex;align-items:center;gap:14px}
-.control-bar-setting .card-head{flex:1;margin-bottom:0}
+.control-bar-setting{display:flex;flex-direction:column;gap:0}
+.control-bar-setting .card-head{margin-bottom:12px}
+/* 卡片里的一行设置：左边文字、右边开关 */
+.setting-row{display:flex;align-items:center;gap:14px;padding-top:11px;border-top:1px solid #1a222c}
+.setting-text{flex:1;min-width:0}
+.setting-text strong{display:block;font-size:12.5px;font-weight:600;color:var(--text)}
+.setting-text p{margin:3px 0 0;color:var(--text-3);font-size:11px;line-height:1.45}
 .switch{flex:none;position:relative;width:48px;height:27px;padding:0;border-radius:999px;background:#26313f;border:1px solid var(--line-2)}
 .switch > span{position:absolute;top:2px;left:2px;width:21px;height:21px;border-radius:50%;background:#8494a8;transition:transform .18s,background .18s}
 .switch[aria-checked="true"]{background:linear-gradient(90deg,var(--green-2),var(--green-1));border-color:transparent;box-shadow:0 0 14px #22c55e44}
 .switch[aria-checked="true"] > span{transform:translateX(21px);background:#fff}
+.switch:disabled{opacity:.4;cursor:not-allowed}
+
+/* ---------- 顶部「播放窗口操作」模块 ----------
+   设计稿是「标题一行 + 两个大按钮一行」的竖排，但在 900px 高的窗口里那要多占 160px，
+   三列内容会被挤到滚动。改成单行：左边标题、右边两个按钮，高度减半还保住层级。 */
+.window-actions{flex:none;display:flex;align-items:center;gap:16px}
+.window-actions-head{flex:none;display:flex;align-items:center;gap:11px;min-width:200px}
+.window-actions-head .card-title strong{font-size:15px}
+.window-actions-grid{flex:1;min-width:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.action-tile{display:flex;align-items:center;gap:12px;min-height:56px;padding:8px 13px;border-radius:12px;border:1px solid transparent;text-align:left}
+.action-icon{flex:none;display:grid;place-items:center;width:38px;height:38px;border-radius:10px}
+.action-icon svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.action-text{flex:1;min-width:0}
+.action-text b{display:block;font-size:14px;font-weight:600;letter-spacing:-.01em}
+.action-text small{display:block;margin-top:2px;font-size:11px;opacity:.82;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.action-tile--primary{background:linear-gradient(135deg,#2fd968,#16a34a);color:#fff;box-shadow:0 6px 18px #22c55e2e}
+.action-tile--primary:hover:not(:disabled){filter:brightness(1.06)}
+.action-tile--primary .action-icon{background:#ffffff30}
+.action-tile--neutral{background:#0f141c;border-color:var(--line-2);color:#c3cede}
+.action-tile--neutral:hover:not(:disabled){background:#151c26;border-color:#38465a;color:#eaf0f7}
+.action-tile--neutral .action-icon{background:#ffffff14}
+.action-tile--danger{background:var(--red-bg);border-color:var(--red-line);color:var(--red)}
+.action-tile--danger:hover:not(:disabled){background:#35191c;border-color:#a13a42}
+.action-tile--danger .action-icon{background:#ffffff1a}
+
+/* ---------- 页脚里的快捷键（点击可改） ---------- */
+.shortcut-key{display:inline-flex;gap:4px;padding:0;border:0;background:transparent;color:inherit}
+.shortcut-key kbd{transition:border-color .15s,background .15s,color .15s}
+.shortcut-key:hover kbd{border-color:#3f4d60;background:#1a222d;color:#e2e8f0}
+.shortcut-key.capturing kbd{border-color:var(--green-1);background:#b7ee6a1a;color:var(--green-1);animation:shortcut-pulse 1s ease-in-out infinite}
+@keyframes shortcut-pulse{50%{opacity:.45}}
 
 .status{flex:none;display:flex;align-items:center;justify-content:center;gap:8px;min-height:20px;margin:0;color:var(--green-1);font-size:12.5px}
 .status.error{color:var(--red)}
@@ -197,6 +233,9 @@ button:focus-visible,#master-seek:focus-visible,.import-row input:focus-visible,
    否则媒体查询会在容器刚好 1120px 时命中，三列被降级成两列。 */
 @media (max-width:1024px){
   .columns{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .window-actions{flex-direction:column;align-items:stretch;gap:11px}
+  .window-actions-head{min-width:0}
+  .window-actions-grid{grid-template-columns:minmax(0,1fr)}
 }
 @media (max-width:860px){
   main{padding:15px 15px 12px;gap:12px}

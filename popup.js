@@ -4,6 +4,8 @@ const openButton = document.querySelector('#open-windows');
 const isExtension = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.id);
 let importableTabs = [];
 let floatingControlsVisible = true;
+// 播放时是否自动收起悬浮控制条（鼠标移入窗口才出现）。默认开启。
+let autoHideControls = true;
 
 if (isExtension) {
   chrome.storage.local.get('recentUrls').then(({ recentUrls }) => {
@@ -21,6 +23,10 @@ function show(message, error = false) {
 
 function updateFloatingControlsButton() {
   document.querySelector('#toggle-floating-controls').setAttribute('aria-checked', String(floatingControlsVisible));
+  const autoHideSwitch = document.querySelector('#toggle-auto-hide-controls');
+  autoHideSwitch.setAttribute('aria-checked', String(autoHideControls));
+  // 「显示控制条」关掉时，自动隐藏已经没有意义，置灰避免误解。
+  autoHideSwitch.disabled = !floatingControlsVisible;
 }
 
 function parseUrls() {
@@ -215,18 +221,14 @@ document.querySelector('#open-windows').addEventListener('click', async () => {
   }
 });
 
-document.querySelector('#theater-current').addEventListener('click', async () => {
+document.querySelector('#restore-tabs').addEventListener('click', async () => {
   if (!isExtension) return;
-  const result = await chrome.runtime.sendMessage({ type: 'theater-current-tab' });
+  const result = await chrome.runtime.sendMessage({ type: 'restore-player-tabs' });
   if (!result.ok) { show(result.error, true); return; }
-  const states = result.result.map(item => item.result?.status).filter(Boolean);
-  show(states.includes('no-media') ? '当前网页暂未找到可见视频。' : '已尝试铺满当前网页播放器。', states.includes('no-media'));
-});
-
-document.querySelector('#restore-current').addEventListener('click', async () => {
-  if (!isExtension) return;
-  const result = await chrome.runtime.sendMessage({ type: 'restore-current-tab' });
-  show(result.ok ? '已还原当前网页。' : result.error, !result.ok);
+  show(result.restored
+    ? `已把 ${result.restored} 个视频搬回浏览器标签页。`
+    : '还没有独立播放窗口。', !result.restored);
+  await refreshSessions();
 });
 
 document.querySelector('#play-all').addEventListener('click', () => controlAll('play'));
@@ -290,6 +292,115 @@ document.querySelector('#toggle-floating-controls').addEventListener('click', as
   show(floatingControlsVisible ? '已显示所有窗口的悬浮控制条。' : '已隐藏所有窗口的悬浮控制条。');
 });
 
+document.querySelector('#toggle-auto-hide-controls').addEventListener('click', async () => {
+  const result = await chrome.runtime.sendMessage({ type: 'set-auto-hide-controls', autoHide: !autoHideControls });
+  if (!result.ok) { show(result.error, true); return; }
+  autoHideControls = result.autoHide;
+  updateFloatingControlsButton();
+  show(autoHideControls
+    ? '播放时已自动隐藏控制条，鼠标移入窗口即出现。'
+    : '控制条将保持半透明常显，不再自动隐藏。');
+});
+
+// ---------- 切换快捷键 ----------
+// Chrome 的 commands.suggested_key 写死在 manifest 里、运行时改不了，所以这里维护的是
+// 扩展自己在播放窗口和控制中心内监听的快捷键；manifest 里那个 Ctrl+Shift+Y 在任意页面仍然可用。
+const DEFAULT_TOGGLE_SHORTCUT = 'Ctrl+Shift+Y';
+let toggleShortcut = DEFAULT_TOGGLE_SHORTCUT;
+let capturingShortcut = false;
+const shortcutButton = document.querySelector('#shortcut-capture');
+
+const shortcutParts = spec => String(spec || '').split('+').map(part => part.trim()).filter(Boolean);
+
+function renderKeycaps(container, spec) {
+  container.replaceChildren(...shortcutParts(spec).map(part => {
+    const kbd = document.createElement('kbd');
+    kbd.textContent = part;
+    return kbd;
+  }));
+}
+
+function renderShortcut() {
+  renderKeycaps(shortcutButton, toggleShortcut);
+  shortcutButton.classList.toggle('capturing', capturingShortcut);
+  shortcutButton.title = capturingShortcut
+    ? '按下新的组合键，Esc 取消'
+    : `当前快捷键 ${toggleShortcut}，点击修改`;
+}
+
+function keyName(event) {
+  const raw = String(event.key || '');
+  if (raw === ' ') return 'Space';
+  if (raw === 'Escape') return 'Esc';
+  return raw.length === 1 ? raw.toUpperCase() : raw;
+}
+
+function matchesShortcut(event, spec) {
+  const parts = shortcutParts(spec);
+  if (parts.length < 2) return false;
+  const key = parts[parts.length - 1].toUpperCase();
+  const mods = parts.slice(0, -1).map(part => part.toLowerCase());
+  const wantCtrl = mods.includes('ctrl') || mods.includes('control');
+  const wantShift = mods.includes('shift');
+  const wantAlt = mods.includes('alt');
+  const wantMeta = mods.includes('meta') || mods.includes('cmd') || mods.includes('command');
+  if (event.ctrlKey !== wantCtrl || event.shiftKey !== wantShift) return false;
+  if (event.altKey !== wantAlt || event.metaKey !== wantMeta) return false;
+  return keyName(event).toUpperCase() === key;
+}
+
+// 从一次按键里提炼出规范写法。只按修饰键、或没有任何修饰键又不是 F 键时返回空串。
+function shortcutFromEvent(event) {
+  const raw = String(event.key || '');
+  if (['Control', 'Alt', 'Shift', 'Meta', 'CapsLock', 'Dead', 'Unidentified'].includes(raw)) return '';
+  const key = keyName(event);
+  const hasModifier = event.ctrlKey || event.altKey || event.metaKey;
+  if (!hasModifier && !/^F([1-9]|1[0-2])$/.test(key)) return '';
+  const parts = [];
+  if (event.ctrlKey) parts.push('Ctrl');
+  if (event.altKey) parts.push('Alt');
+  if (event.shiftKey) parts.push('Shift');
+  if (event.metaKey) parts.push('Meta');
+  parts.push(key);
+  return parts.join('+');
+}
+
+shortcutButton.addEventListener('click', () => {
+  if (!isExtension) return;
+  capturingShortcut = true;
+  renderShortcut();
+  show('请按下新的组合键，Esc 取消。');
+});
+
+document.addEventListener('keydown', async event => {
+  if (!isExtension) return;
+  if (capturingShortcut) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      capturingShortcut = false;
+      renderShortcut();
+      show('已取消修改。');
+      return;
+    }
+    const spec = shortcutFromEvent(event);
+    if (!spec) { show('至少要带 Ctrl / Alt / Win 中的一个，或直接用 F1–F12。', true); return; }
+    const result = await chrome.runtime.sendMessage({ type: 'set-toggle-shortcut', shortcut: spec });
+    if (!result.ok) { show(result.error, true); return; }
+    toggleShortcut = result.shortcut;
+    capturingShortcut = false;
+    renderShortcut();
+    show(`切换快捷键已改为 ${toggleShortcut}。`);
+    return;
+  }
+  // 正常状态下按到当前快捷键就切换。manifest 里那个浏览器级快捷键如果被 Chrome 吞掉，
+  // 这里不会收到事件，也就不会重复触发（background 里另有 400ms 去重兜底）。
+  if (matchesShortcut(event, toggleShortcut)) {
+    event.preventDefault();
+    await chrome.runtime.sendMessage({ type: 'toggle-dashboard-grid' });
+  }
+});
+
 document.querySelector('#show-player-grid').addEventListener('click', async () => {
   const result = await chrome.runtime.sendMessage({ type: 'show-player-grid' });
   if (!result.ok) { show(result.error, true); return; }
@@ -309,14 +420,21 @@ document.querySelector('#close-all-windows').addEventListener('click', async () 
 });
 
 if (isExtension) {
-  chrome.storage.local.get('floatingControlsVisible').then(({ floatingControlsVisible: saved }) => {
-    floatingControlsVisible = saved ?? true;
+  chrome.storage.local.get(['floatingControlsVisible', 'autoHideControls', 'toggleShortcut']).then(saved => {
+    floatingControlsVisible = saved.floatingControlsVisible ?? true;
+    autoHideControls = saved.autoHideControls ?? true;
+    toggleShortcut = typeof saved.toggleShortcut === 'string' && saved.toggleShortcut.trim()
+      ? saved.toggleShortcut.trim()
+      : DEFAULT_TOGGLE_SHORTCUT;
     updateFloatingControlsButton();
+    renderShortcut();
   });
   refreshSessions();
   refreshPlaylist();
   refreshBookmarks();
   refreshLayoutMode();
+} else {
+  renderShortcut();
 }
 
 // 输入区行号：跟随内容行数变化（与 textarea 的行高、上内边距保持一致才能对齐）。
