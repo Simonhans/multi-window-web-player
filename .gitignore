@@ -1,4 +1,11 @@
 # Browser extension packages and signing keys
+#
+# 注意：发布用的签名私钥【不要】放在本目录里。
+# 本目录正是「加载已解压的扩展程序」时选中的那个文件夹，Chrome 一旦在里面发现 .pem，
+# 就会在扩展管理页弹出「此扩展程序包含密钥文件，您最好不要执行此操作」的警告。
+# 它现在放在仓库的上一级目录：../release-key.pem
+# 打包时用 --pack-extension-key 指向它 —— 复用同一个私钥才能让 .crx 的扩展 ID 保持不变，
+# 已安装的用户才能原地升级而不是卸载重装。
 *.crx
 *.pem
 *.zip

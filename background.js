@@ -175,6 +175,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'set-preview-on-hover') {
+    setPreviewOnHover(Boolean(message.preview))
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message.type === 'get-toggle-shortcut') {
     getToggleShortcut()
       .then(shortcut => sendResponse({ ok: true, shortcut }))
@@ -299,64 +306,108 @@ function updatePlaylistBadge(count) {
 async function openPlayerWindows(urls) {
   const opened = [];
   const newSessions = [];
-  const [floatingControlsVisible, autoHideControls, toggleShortcut] = await getTheaterOptions();
+  const theaterOptions = await getTheaterOptions();
+  // 创建窗口之前记下前台窗口（= 调用方）。创建过程会扰动焦点，结束时再取就不可靠了。
+  const callerId = await currentForegroundWindowId();
 
-  for (let index = 0; index < urls.length; index += 1) {
+  // 批量打开 = 「我要看的就是这一批」：先把已存在的播放窗口全部关掉。
+  // 不清的话残留窗口会参与均分 —— 残留 2 个 + 新开 3 个就按 5 窗均分（每个 646×526），
+  // 关掉旧的再点「返回播放网格」又变成 3 窗均分（966×526），两次的大小布局对不上。
+  // 书签按网址保存在本地，不随窗口关闭丢失。
+  await closeAllPlayerWindows();
+
+  // ——— 核心改动：先算好目标布局，创建窗口时直接用最终位置和尺寸 ———
+  // 之前是先全部创建成 700×500，再调 arrangePlayerWindows 改位置。
+  // 但 Windows 的窗口管理器对刚创建的 popup 窗口做 update 不一定能可靠生效
+  // （系统内部初始化和 update 存在竞争），导致「第一次打开」的大小与
+  // 「返回播放网格」不一致。现在直接用目标矩形创建，彻底避免 create → update 竞争。
+  const displays = await chrome.system.display.getInfo();
+  const area = (displays.find(d => d.isPrimary) || displays[0]).workArea;
+  const layoutMode = await getLayoutMode();
+  const ratio = await getFocusRatio();
+  const rects = expandForOverlap(
+    computeLayout(layoutMode, urls.length, area, ratio), area);
+
+  for (let i = 0; i < urls.length; i++) {
+    const rect = rects[i];
     const windowInfo = await chrome.windows.create({
-      url: urls[index],
+      url: urls[i],
       type: 'popup',
       focused: false,
-      width: 700,
-      height: 500
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height
     });
     const tab = windowInfo.tabs?.[0];
-    if (tab?.id) {
-      await waitForTabLoad(tab.id);
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id, allFrames: true },
-          func: startTheaterMode,
-          args: [floatingControlsVisible, autoHideControls, toggleShortcut]
-        });
-      } catch (_) {
-        // 页面可能仍在加载，或浏览器不允许向该页面注入脚本。
-      }
-    }
     opened.push(windowInfo.id);
-    newSessions.push({ tabId: tab?.id, windowId: windowInfo.id, url: urls[index] });
+    if (tab?.id) newSessions.push({ tabId: tab.id, windowId: windowInfo.id, url: urls[i] });
   }
   const existing = await getPlayerSessions();
   const sessions = [...existing, ...newSessions].filter(session => session.tabId);
   await chrome.storage.local.set({ playerSessions: sessions });
+
+  // 等 300ms 让所有新窗口完成系统级初始化，然后用 arrangePlayerWindows 做一次
+  // 精确矫正（处理 mainKey 排序等逻辑）。窗口已经在目标位置了，这一步只是微调。
+  await new Promise(resolve => setTimeout(resolve, 300));
   await arrangePlayerWindows(sessions);
+
+  await stashForegroundWindow(sessions, callerId);
+  await raisePlayerWindows(sessions);
+  // 窗口已经排好、全部可见了，注入在后台并行等各自的页面加载（总耗时 = 最慢的那个，
+  // 而不是串行相加）。注入期间用户看到的就是正确的网格里装着正在加载的页面。
+  await Promise.allSettled(newSessions
+    .filter(session => session.tabId)
+    .map(session => injectTheaterMode(session.tabId, theaterOptions)));
   return { opened: opened.length };
 }
 
 async function moveTabsToPlayerWindows(tabIds) {
-  const [floatingControlsVisible, autoHideControls, toggleShortcut] = await getTheaterOptions();
+  const theaterOptions = await getTheaterOptions();
+  const callerId = await currentForegroundWindowId();
   const newSessions = [];
+  const injected = [];
+  // 同 openPlayerWindows：先算好布局、用目标矩形创建窗口，注入放最后并行。
+  // 先过滤出有效标签，才能准确算出总数和布局。
+  const validTabs = [];
   for (const tabId of [...new Set(tabIds)]) {
-    const tab = await chrome.tabs.get(tabId);
-    if (!tab.url || !/^https?:\/\//i.test(tab.url)) continue;
-    const windowInfo = await chrome.windows.create({ tabId, type: 'popup', focused: false });
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (tab?.url && /^https?:\/\//i.test(tab.url)) validTabs.push(tab);
+  }
+  // 已有的播放窗口 + 新增的标签 = 总窗口数，提前算好布局坐标。
+  const existing = await getPlayerSessions();
+  const totalCount = existing.length + validTabs.length;
+  const displays = await chrome.system.display.getInfo();
+  const area = (displays.find(d => d.isPrimary) || displays[0]).workArea;
+  const layoutMode = await getLayoutMode();
+  const ratio = await getFocusRatio();
+  const rects = totalCount
+    ? expandForOverlap(computeLayout(layoutMode, totalCount, area, ratio), area)
+    : [];
+
+  for (let i = 0; i < validTabs.length; i++) {
+    const tab = validTabs[i];
+    const rectIndex = existing.length + i;
+    const rect = rects[rectIndex] || {};
+    const createOpts = { tabId: tab.id, type: 'popup', focused: false };
+    if (rect.left != null) Object.assign(createOpts, rect);
+    const windowInfo = await chrome.windows.create(createOpts);
     const movedTab = windowInfo.tabs?.[0];
     if (movedTab?.id) {
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId: movedTab.id, allFrames: true },
-          func: startTheaterMode,
-          args: [floatingControlsVisible, autoHideControls, toggleShortcut]
-        });
-      } catch (_) {
-        // 受保护页面或播放器框架可能拒绝注入，标签本身仍已成功移动。
-      }
       newSessions.push({ tabId: movedTab.id, windowId: windowInfo.id, url: movedTab.url || tab.url });
+      injected.push(movedTab.id);
     }
   }
-  const existing = await getPlayerSessions();
   const sessions = [...existing, ...newSessions];
   await chrome.storage.local.set({ playerSessions: sessions });
+
+  // 等 300ms 让新窗口稳定，再做一次精确矫正。
+  await new Promise(resolve => setTimeout(resolve, 300));
   await arrangePlayerWindows(sessions);
+
+  await stashForegroundWindow(sessions, callerId);
+  await raisePlayerWindows(sessions);
+  await Promise.allSettled(injected.map(tabId => injectTheaterMode(tabId, theaterOptions)));
   return { moved: newSessions.length };
 }
 
@@ -507,35 +558,65 @@ async function arrangePlayerWindows(sessions, mode) {
   const displays = await chrome.system.display.getInfo();
   const area = (displays.find(item => item.isPrimary) || displays[0]).workArea;
   const rects = expandForOverlap(computeLayout(layout, sessions.length, area, ratio), area);
-  // 先摆副窗口。主窗口单独放到最后处理 —— 一是避免并行执行时被别人的 state 变更
-  // 抢到前面，二是 chrome.windows.update 的 focused:false 会顺带改变 z 序，
-  // 所以干脆不给副窗口传 focused，只在主窗口上置顶一次。
-  await Promise.all(sessions.slice(1).map((session, offset) => chrome.windows
-    .update(session.windowId, { state: 'normal', ...rects[offset + 1] })
-    .catch(() => {})));
-  // 焦点落在主窗口（第 1 个）而不是最后一个 —— 主副布局下这才是你想看的那块。
-  await chrome.windows.update(sessions[0].windowId, {
-    state: 'normal', ...rects[0], focused: true
-  }).catch(() => {});
+  // 逐个顺序更新窗口位置（不用 Promise.all 并行）—— Windows 的窗口管理器在
+  // 并行处理多个新创建的 popup 窗口位置更新时可能互相干扰，导致部分窗口的尺寸
+  // 没有生效。逐个发更可靠。
+  // 同时只在窗口不处于 normal 状态时才带 state:'normal'：对已经是 normal 的窗口
+  // 做一次多余的 state 切换可能触发系统的窗口初始化逻辑，覆盖坐标。
+  for (let i = 0; i < sessions.length; i++) {
+    const win = await chrome.windows.get(sessions[i].windowId).catch(() => null);
+    if (!win) continue;
+    const props = { ...rects[i] };
+    if (win.state !== 'normal') props.state = 'normal';
+    // 主窗口（第 1 个）获得焦点
+    if (i === 0) props.focused = true;
+    await chrome.windows.update(sessions[i].windowId, props).catch(() => {});
+  }
+}
+
+// 把所有播放窗口依次提到 Z 序最前：每聚焦一个，它就盖到别人上面；
+// 主窗口放最后聚焦，保证它成为当前活动窗口。
+// 排列（arrangePlayerWindows）只改位置不改 Z 序 —— 副窗口的 update 刻意不带 focused，
+// 排列完它们仍压在调用方窗口底下。只把主窗口提上来是不够的，
+// 其余窗口会被控制中心整个盖住，看起来就像「只打开了一个窗口」。
+// 注意：这里只传 focused:true，不再重复传 state:'normal' ——
+// arrangePlayerWindows 已经设置好了精确的 left/top/width/height + state:'normal'，
+// 若在这里再发一次不带坐标的 state:'normal'，Windows 会把刚创建的窗口当作
+// 「新窗口重新初始化」，导致系统覆盖掉之前精确排列的尺寸和位置，
+// 表现为首次打开时窗口大小与「返回播放网格」不一致。
+async function raisePlayerWindows(sessions) {
+  const ordered = withMainFirst(sessions, await getMainKey());
+  for (const session of [...ordered.slice(1), ...ordered.slice(0, 1)]) {
+    await chrome.windows.update(session.windowId, { focused: true }).catch(() => {});
+  }
+}
+
+// 把挡在前面的调用方窗口（控制中心 / 浏览器主窗口）记下状态并最小化让位，
+// 这样排列出来的全部播放窗口才真正露得出来。
+// callerId：调用方在动手创建窗口**之前**记下的前台窗口 id。创建一堆窗口的过程里
+// 焦点可能被 OS 扰动，结束时 getLastFocused 未必还是调用方 —— 所以动手前记、这里优先用记录值。
+async function stashForegroundWindow(sessions, callerId) {
+  const current = callerId != null
+    ? await chrome.windows.get(callerId).catch(() => null)
+    : await chrome.windows.getLastFocused().catch(() => null);
+  const playerIds = new Set(sessions.map(session => session.windowId));
+  if (!current?.id || playerIds.has(current.id)) return;
+  // 记下最小化之前的窗口状态，切回控制中心时才能原样恢复（最大化 / 普通）。
+  await rememberDashboardWindowState(current.id, current.state);
+  await chrome.windows.update(current.id, { state: 'minimized' }).catch(() => {});
+}
+
+// 动手创建窗口之前把前台窗口 id 记下来（配合 stashForegroundWindow 用）。
+async function currentForegroundWindowId() {
+  return chrome.windows.getLastFocused().then(window => window?.id ?? null).catch(() => null);
 }
 
 async function showPlayerGrid() {
   const sessions = await getPlayerSessions();
   if (!sessions.length) return { shown: 0 };
-  const currentWindow = await chrome.windows.getLastFocused();
-  const playerWindowIds = new Set(sessions.map(session => session.windowId));
-  if (currentWindow?.id && !playerWindowIds.has(currentWindow.id)) {
-    // 记下最小化之前的窗口状态，切回控制中心时才能原样恢复（最大化 / 普通）。
-    await rememberDashboardWindowState(currentWindow.id, currentWindow.state);
-    await chrome.windows.update(currentWindow.id, { state: 'minimized' }).catch(() => {});
-  }
+  await stashForegroundWindow(sessions);
   await arrangePlayerWindows(sessions);
-  // 依次聚焦每个播放窗口：每次聚焦都会把该窗口提到 Z 序最前，
-  // 这样全部播放窗口都盖在控制中心之上。主窗口放最后聚焦，保证它是当前活动窗口。
-  const ordered = withMainFirst(sessions, await getMainKey());
-  for (const session of [...ordered.slice(1), ...ordered.slice(0, 1)]) {
-    await chrome.windows.update(session.windowId, { state: 'normal', focused: true }).catch(() => {});
-  }
+  await raisePlayerWindows(sessions);
   return { shown: sessions.length };
 }
 
@@ -575,11 +656,11 @@ async function recallDashboardWindowState(windowId) {
 async function setFloatingControlsVisible(visible) {
   await chrome.storage.local.set({ floatingControlsVisible: visible });
   const sessions = await getPlayerSessions();
-  const [autoHide, shortcut] = [await getAutoHideControls(), await getToggleShortcut()];
+  const options = { ...(await getTheaterOptions()), visible };
   await Promise.allSettled(sessions.map(session => chrome.scripting.executeScript({
     target: { tabId: session.tabId, allFrames: true },
     func: startTheaterMode,
-    args: [visible, autoHide, shortcut]
+    args: [options]
   })));
   return { visible };
 }
@@ -594,18 +675,44 @@ async function setAutoHideControls(autoHide) {
   const value = autoHide !== false;
   await chrome.storage.local.set({ autoHideControls: value });
   const sessions = await getPlayerSessions();
-  const [visible, shortcut] = [await getFloatingControlsVisible(), await getToggleShortcut()];
+  const options = { ...(await getTheaterOptions()), autoHide: value };
   await Promise.allSettled(sessions.map(session => chrome.scripting.executeScript({
     target: { tabId: session.tabId, allFrames: true },
     func: startTheaterMode,
-    args: [visible, value, shortcut]
+    args: [options]
   })));
   return { autoHide: value };
 }
 
-// startTheaterMode 的三个参数总是成对使用，统一取一次避免各调用点写重复代码。
+// 鼠标悬停在进度条上时是否显示时间与画面预览。默认开启。
+// 画面预览要额外解码一路视频（独立 video 元素，不动主视频），
+// 流媒体（MSE，src 是 MediaSource 的 blob URL）拿不到帧时会自动降级成只显示时间。
+async function getPreviewOnHover() {
+  const { previewOnHover = true } = await chrome.storage.local.get('previewOnHover');
+  return previewOnHover !== false;
+}
+
+async function setPreviewOnHover(preview) {
+  const value = preview !== false;
+  await chrome.storage.local.set({ previewOnHover: value });
+  const sessions = await getPlayerSessions();
+  const options = { ...(await getTheaterOptions()), preview: value };
+  await Promise.allSettled(sessions.map(session => chrome.scripting.executeScript({
+    target: { tabId: session.tabId, allFrames: true },
+    func: startTheaterMode,
+    args: [options]
+  })));
+  return { preview: value };
+}
+
+// startTheaterMode 的选项总是成组使用，统一取一次避免各调用点写重复代码。
 async function getTheaterOptions() {
-  return [await getFloatingControlsVisible(), await getAutoHideControls(), await getToggleShortcut()];
+  return {
+    visible: await getFloatingControlsVisible(),
+    autoHide: await getAutoHideControls(),
+    preview: await getPreviewOnHover(),
+    shortcut: await getToggleShortcut()
+  };
 }
 
 // 控制中心 / 播放网格的切换快捷键。注意：Chrome 的 commands.suggested_key 是 manifest 里写死的，
@@ -622,11 +729,11 @@ async function setToggleShortcut(spec) {
   const value = String(spec || '').trim() || DEFAULT_TOGGLE_SHORTCUT;
   await chrome.storage.local.set({ toggleShortcut: value });
   const sessions = await getPlayerSessions();
-  const [visible, autoHide] = await getTheaterOptions();
+  const options = { ...(await getTheaterOptions()), shortcut: value };
   await Promise.allSettled(sessions.map(session => chrome.scripting.executeScript({
     target: { tabId: session.tabId, allFrames: true },
     func: startTheaterMode,
-    args: [visible, autoHide, value]
+    args: [options]
   })));
   return { shortcut: value };
 }
@@ -937,6 +1044,19 @@ function countFound(outcomes) {
   }, 0);
 }
 
+// 等该标签加载完成后注入铺满播放器 + 控制条。失败静默（页面可能拒绝注入）。
+// 独立成函数是为了配合「先建齐所有窗口 → 立即排列 → 并行注入」的流程：
+// 排列绝不能等页面加载 —— 真实视频站一个页面十几秒，串行等下来用户盯着级联小窗看半分钟。
+function injectTheaterMode(tabId, options) {
+  return waitForTabLoad(tabId)
+    .then(() => chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: startTheaterMode,
+      args: [options]
+    }))
+    .catch(() => {});
+}
+
 function waitForTabLoad(tabId, timeout = 12000) {
   return new Promise(resolve => {
     const timer = setTimeout(done, timeout);
@@ -953,9 +1073,16 @@ function waitForTabLoad(tabId, timeout = 12000) {
 }
 
 // 此函数会被 Chrome 序列化到目标网页中，不能引用扩展环境的变量。
-function startTheaterMode(showFloatingControls = true, autoHideControls = true, toggleShortcut = '') {
+// 参数是选项对象，不是位置参数：此前是 (visible, autoHide, shortcut) 三个位置参数，
+// 每加一项配置都得改 6 个注入点、还得记住顺序，太容易错。
+function startTheaterMode(options = {}) {
+  const showFloatingControls = options.visible !== false;
+  const autoHideControls = options.autoHide !== false;
+  const previewOnHover = options.preview !== false;
+  const toggleShortcut = typeof options.shortcut === 'string' ? options.shortcut : '';
   const stateKey = '__multiWindowWebPlayerState__';
   const nextAutoHide = autoHideControls !== false;
+  const nextPreview = previewOnHover;
   const nextShortcut = String(toggleShortcut || '').trim();
   if (window[stateKey]?.active) {
     const currentVideo = [...document.querySelectorAll('video')].filter(video => {
@@ -967,6 +1094,9 @@ function startTheaterMode(showFloatingControls = true, autoHideControls = true, 
       return br.width * br.height - ar.width * ar.height;
     })[0];
     window[stateKey].autoHide = nextAutoHide;
+    // 预览开关同理必须写回 state：重建控制条时 installPlaybackControls 是从 state 读这两个值的，
+    // 不更新的话重建出来的还是旧设置 —— 实测表现为「关掉预览后再打开，悬停没反应」。
+    window[stateKey].preview = nextPreview;
     // 快捷键变了就换掉旧的监听（控制条那边则按 autoHide 变化决定是否重建）。
     if (window[stateKey].toggleShortcut !== nextShortcut) {
       if (Array.isArray(window[stateKey].shortcutCleanup)) {
@@ -977,8 +1107,12 @@ function startTheaterMode(showFloatingControls = true, autoHideControls = true, 
       installToggleShortcut(window[stateKey], nextShortcut);
     }
     const existingControls = document.querySelector('[data-multi-player-controls]');
-    // 自动隐藏开关变了就拆掉重建：显隐逻辑在创建时就把值收进了闭包，就地改容易漏。
-    if (existingControls && existingControls.dataset.autoHide !== String(nextAutoHide)) {
+    // 自动隐藏或悬停预览开关变了就拆掉重建：两者都在创建时把值收进了闭包，就地改容易漏。
+    const needsRebuild = existingControls && (
+      existingControls.dataset.autoHide !== String(nextAutoHide) ||
+      existingControls.dataset.preview !== String(nextPreview)
+    );
+    if (needsRebuild) {
       // 重建前先把旧控制条挂在 document / window 上的监听收干净，
       // 否则每切换一次设置就会留下一批指向已删除元素的监听器。
       if (Array.isArray(window[stateKey].controlsCleanup)) {
@@ -1078,7 +1212,7 @@ function startTheaterMode(showFloatingControls = true, autoHideControls = true, 
   css(box, 'max-width', 'none'); css(box, 'max-height', 'none'); css(box, 'margin', '0'); css(box, 'padding', '0');
   css(box, 'transform', 'none'); css(box, 'z-index', '2147483646'); css(box, 'overflow', 'hidden'); css(box, 'background', '#000');
   css(document.documentElement, 'overflow', 'hidden'); css(document.body, 'overflow', 'hidden');
-  const state = { active: true, saved, cleanup: [], autoHide: nextAutoHide, toggleShortcut: nextShortcut };
+  const state = { active: true, saved, cleanup: [], autoHide: nextAutoHide, preview: nextPreview, toggleShortcut: nextShortcut };
   window[stateKey] = state;
   installExitButton(state);
   installPlaybackControls(video, state);
@@ -1156,6 +1290,8 @@ function startTheaterMode(showFloatingControls = true, autoHideControls = true, 
     if (!showFloatingControls) bar.style.setProperty('display', 'none', 'important');
     // 自动隐藏模式记在 DOM 上，便于「开关变了就拆掉重建」那条路径判断是否需要重装。
     bar.dataset.autoHide = String(Boolean(currentState.autoHide));
+    // 悬停预览开关也记在 DOM 上，理由同上：开关变了要拆掉重建控制条。
+    bar.dataset.preview = String(Boolean(currentState.preview));
     const autoHide = () => bar.dataset.autoHide === 'true';
     // 自动隐藏：平时完全收起（透明 + 不接收点击，否则会挡住视频上的操作），
     // 鼠标进到窗口里才出现。关闭该模式时保持原来的「半透明常显、悬停变亮」。
@@ -1235,6 +1371,130 @@ function startTheaterMode(showFloatingControls = true, autoHideControls = true, 
       const fraction = Number(range.value) / 1000;
       if (!applyToAll(event, 'seek', fraction) && Number.isFinite(currentVideo.duration)) currentVideo.currentTime = fraction * currentVideo.duration;
     });
+
+    // ---- 进度条悬停预览 ----
+    // 鼠标扫过进度条时，上方浮出「该时间点的画面 + 时间」，进度条上画一条竖线标位置。
+    //
+    // 画面靠另开一路独立 video 抽帧：主视频绝不能 seek（会打断播放），
+    // 所以复制一个同源的 video，seek 到目标时间后把当前帧 drawImage 到 canvas 上。
+    // 实测（见 _bugcheck/preview-probe.js）：直链和普通 Blob 都能抽到帧，且主视频 currentTime 不受影响；
+    // 但 MediaSource 的 blob URL 没法被第二个 video 复用（报 Format error），
+    // 这种情况静默降级成只显示时间，并记住失败状态 —— 否则每次悬停都要白等一次超时。
+    const preview = document.createElement('div');
+    preview.setAttribute('data-multi-player-preview', 'true');
+    preview.style.cssText = 'position:fixed!important;left:0!important;bottom:0!important;z-index:2147483647!important;display:none!important;flex-direction:column!important;align-items:center!important;gap:4px!important;padding:4px!important;border:1px solid #ffffff2b!important;border-radius:7px!important;background:#121212f2!important;box-shadow:0 8px 24px #000b!important;backdrop-filter:blur(8px)!important;pointer-events:none!important;transform:translateX(-50%)!important';
+    const previewCanvas = document.createElement('canvas');
+    previewCanvas.width = 160; previewCanvas.height = 90;
+    // 先不显示：抽到第一帧之前显示出来会是个黑块，比没有还难看。
+    previewCanvas.style.cssText = 'display:none!important;width:160px!important;height:90px!important;border-radius:4px!important;background:#000!important';
+    const previewTime = document.createElement('span');
+    previewTime.style.cssText = 'color:#e8eaed!important;font:11px ui-monospace,Consolas,monospace!important;line-height:1!important';
+    preview.append(previewCanvas, previewTime);
+    const previewMarker = document.createElement('div');
+    previewMarker.setAttribute('data-multi-player-preview-marker', 'true');
+    previewMarker.style.cssText = 'position:fixed!important;width:2px!important;border-radius:1px!important;background:#b7ee6a!important;box-shadow:0 0 6px #b7ee6a99!important;z-index:2147483647!important;display:none!important;pointer-events:none!important';
+    document.body.append(preview, previewMarker);
+
+    const PREVIEW_THROTTLE_MS = 90;
+    let previewVideo = null;     // 抽帧用的独立 video，懒创建、全程复用
+    let previewBroken = false;   // 抽不出帧就不再试（MSE 源必然失败，重试只会让每次悬停都卡一下）
+    let previewSeq = 0;          // 请求序号，用来丢弃过期的抽帧结果
+    let previewThrottle = 0;
+
+    const waitForEvent = (element, name, ms) => new Promise((resolve, reject) => {
+      let timer = 0;
+      const onDone = () => { clearTimeout(timer); resolve(); };
+      timer = setTimeout(() => {
+        element.removeEventListener(name, onDone);
+        reject(new Error('timeout'));
+      }, ms);
+      element.addEventListener(name, onDone, { once: true });
+    });
+
+    const ensurePreviewVideo = () => {
+      if (previewVideo || previewBroken) return previewVideo;
+      const source = currentVideo.currentSrc || currentVideo.src;
+      if (!source) { previewBroken = true; return null; }
+      const video = document.createElement('video');
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = 'auto';
+      video.style.cssText = 'position:fixed!important;left:-99999px!important;top:0!important;width:2px!important;height:2px!important;opacity:0!important;pointer-events:none!important';
+      // 刻意不设 crossOrigin：设了会让一部分站点直接加载失败。
+      // drawImage 只要不回头读像素就不受跨域污染限制，所以不需要它。
+      video.addEventListener('error', () => { previewBroken = true; }, { once: true });
+      video.src = source;
+      previewVideo = video;
+      document.body.append(video);
+      return video;
+    };
+
+    const drawPreviewFrame = async time => {
+      const video = ensurePreviewVideo();
+      if (!video) return false;
+      try {
+        if (video.readyState < 1) await waitForEvent(video, 'loadedmetadata', 2500);
+        if (!Number.isFinite(video.duration) || video.duration <= 0) return false;
+        const target = Math.max(0, Math.min(time, video.duration - 0.05));
+        if (Math.abs(video.currentTime - target) > 0.05) {
+          const seeked = waitForEvent(video, 'seeked', 2000);
+          video.currentTime = target;
+          await seeked;
+        }
+        previewCanvas.getContext('2d').drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    };
+
+    const hidePreview = () => {
+      preview.style.setProperty('display', 'none', 'important');
+      previewMarker.style.setProperty('display', 'none', 'important');
+      previewSeq += 1;   // 让还在飞的抽帧结果作废
+      if (previewThrottle) { clearTimeout(previewThrottle); previewThrottle = 0; }
+    };
+
+    const showPreviewAt = clientX => {
+      const duration = currentVideo.duration;
+      if (!Number.isFinite(duration) || duration <= 0) return;
+      const rect = range.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      const time = ratio * duration;
+      previewTime.textContent = format(time);
+
+      preview.style.setProperty('display', 'flex', 'important');
+      previewMarker.style.setProperty('display', 'block', 'important');
+      // 气泡中心跟着鼠标，但夹在窗口内 —— 否则贴着左右边缘时整个气泡会跑到窗口外面。
+      const half = (preview.offsetWidth || 168) / 2;
+      const center = Math.min(window.innerWidth - half - 6, Math.max(half + 6, clientX));
+      preview.style.setProperty('left', `${Math.round(center)}px`, 'important');
+      preview.style.setProperty('bottom', `${Math.max(8, Math.round(window.innerHeight - rect.top + 14))}px`, 'important');
+      // 竖线画在进度条上，比进度条本身高一点，好认。
+      previewMarker.style.setProperty('left', `${Math.round(rect.left + ratio * rect.width)}px`, 'important');
+      previewMarker.style.setProperty('top', `${Math.round(rect.top - 4)}px`, 'important');
+      previewMarker.style.setProperty('height', `${Math.round(rect.height + 8)}px`, 'important');
+
+      // 节流 + 只认最后一次：鼠标扫得快的时候，中间的抽帧请求全部丢弃。
+      // 不这么做的话一串 seek 排队等解码，画面会闪来闪去。
+      const seq = previewSeq + 1;
+      previewSeq = seq;
+      if (previewThrottle) clearTimeout(previewThrottle);
+      previewThrottle = setTimeout(async () => {
+        previewThrottle = 0;
+        if (seq !== previewSeq) return;
+        const ok = await drawPreviewFrame(time);
+        if (seq !== previewSeq) return;   // 抽帧期间鼠标又动了，这次结果作废
+        previewCanvas.style.setProperty('display', ok ? 'block' : 'none', 'important');
+      }, PREVIEW_THROTTLE_MS);
+    };
+
+    const onRangeMove = event => { if (previewOnHover) showPreviewAt(event.clientX); };
+    range.addEventListener('pointermove', onRangeMove);
+    range.addEventListener('pointerleave', hidePreview);
+    // 拖动时指针被 range 捕获，pointermove 会继续派发过来，预览跟着走 —— 正是想要的效果。
+    // 进度条上盖着预览会挡住命中检测，所以两个元素都设了 pointer-events:none。
 
     // ---- 视频书签 ----
     let bookmarkItems = [];
@@ -1364,7 +1624,9 @@ function startTheaterMode(showFloatingControls = true, autoHideControls = true, 
         loadBookmarks();
       }
     });
-    window.addEventListener('resize', positionPanel, { passive: true });
+    // 窗口尺寸一变，预览气泡和竖线的位置就失效了，顺手收掉。
+    const onResize = () => { positionPanel(); hidePreview(); };
+    window.addEventListener('resize', onResize, { passive: true });
     loadBookmarks();
 
     // 鼠标停住不动超过这么久就自动淡出，不用非得把指针移出窗口。
@@ -1390,6 +1652,8 @@ function startTheaterMode(showFloatingControls = true, autoHideControls = true, 
       if (!force && bar.matches(':hover')) return;
       cancelIdle();
       setBarVisible(false);
+      // 控制条一收起，挂在它上面的悬停预览也必须收，否则会剩一个预览框孤零零浮在画面上。
+      hidePreview();
       // 自动隐藏时，控制条一收起就把书签浮层一并收掉，免得留个孤零零的浮层挂在画面上。
       if (autoHide()) markPanel.style.setProperty('display', 'none', 'important');
     };
@@ -1410,11 +1674,18 @@ function startTheaterMode(showFloatingControls = true, autoHideControls = true, 
     const controlsCleanup = [
       () => bar.remove(),
       () => markPanel.remove(),
+      () => preview.remove(),
+      () => previewMarker.remove(),
+      // 抽帧用的隐藏 video 也要撤掉，否则会一直占着一路解码。
+      () => { if (previewVideo) previewVideo.remove(); },
+      () => range.removeEventListener('pointermove', onRangeMove),
+      () => range.removeEventListener('pointerleave', hidePreview),
       () => events.forEach(event => currentVideo.removeEventListener(event, refresh)),
       () => document.removeEventListener('mousemove', reveal),
       () => document.documentElement.removeEventListener('mouseleave', onWindowLeave),
-      () => window.removeEventListener('resize', positionPanel),
-      () => cancelIdle()
+      () => window.removeEventListener('resize', onResize),
+      () => cancelIdle(),
+      () => hidePreview()
     ];
     currentState.controlsCleanup = controlsCleanup;
     currentState.cleanup.push(...controlsCleanup);

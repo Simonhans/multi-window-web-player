@@ -6,6 +6,8 @@ let importableTabs = [];
 let floatingControlsVisible = true;
 // 播放时是否自动收起悬浮控制条（鼠标移入窗口才出现）。默认开启。
 let autoHideControls = true;
+// 鼠标悬停在进度条上时是否显示时间与画面预览。默认开启。
+let previewOnHover = true;
 
 if (isExtension) {
   chrome.storage.local.get('recentUrls').then(({ recentUrls }) => {
@@ -25,8 +27,11 @@ function updateFloatingControlsButton() {
   document.querySelector('#toggle-floating-controls').setAttribute('aria-checked', String(floatingControlsVisible));
   const autoHideSwitch = document.querySelector('#toggle-auto-hide-controls');
   autoHideSwitch.setAttribute('aria-checked', String(autoHideControls));
-  // 「显示控制条」关掉时，自动隐藏已经没有意义，置灰避免误解。
+  const previewSwitch = document.querySelector('#toggle-preview-on-hover');
+  previewSwitch.setAttribute('aria-checked', String(previewOnHover));
+  // 「显示控制条」关掉时，控制条上的两个功能都没有意义，一并置灰避免误解。
   autoHideSwitch.disabled = !floatingControlsVisible;
+  previewSwitch.disabled = !floatingControlsVisible;
 }
 
 function parseUrls() {
@@ -302,6 +307,16 @@ document.querySelector('#toggle-auto-hide-controls').addEventListener('click', a
     : '控制条将保持半透明常显，不再自动隐藏。');
 });
 
+document.querySelector('#toggle-preview-on-hover').addEventListener('click', async () => {
+  const result = await chrome.runtime.sendMessage({ type: 'set-preview-on-hover', preview: !previewOnHover });
+  if (!result.ok) { show(result.error, true); return; }
+  previewOnHover = result.preview;
+  updateFloatingControlsButton();
+  show(previewOnHover
+    ? '鼠标扫过进度条会显示该处的时间与画面。'
+    : '已关闭进度条悬停预览。');
+});
+
 // ---------- 切换快捷键 ----------
 // Chrome 的 commands.suggested_key 写死在 manifest 里、运行时改不了，所以这里维护的是
 // 扩展自己在播放窗口和控制中心内监听的快捷键；manifest 里那个 Ctrl+Shift+Y 在任意页面仍然可用。
@@ -420,9 +435,10 @@ document.querySelector('#close-all-windows').addEventListener('click', async () 
 });
 
 if (isExtension) {
-  chrome.storage.local.get(['floatingControlsVisible', 'autoHideControls', 'toggleShortcut']).then(saved => {
+  chrome.storage.local.get(['floatingControlsVisible', 'autoHideControls', 'previewOnHover', 'toggleShortcut']).then(saved => {
     floatingControlsVisible = saved.floatingControlsVisible ?? true;
     autoHideControls = saved.autoHideControls ?? true;
+    previewOnHover = saved.previewOnHover ?? true;
     toggleShortcut = typeof saved.toggleShortcut === 'string' && saved.toggleShortcut.trim()
       ? saved.toggleShortcut.trim()
       : DEFAULT_TOGGLE_SHORTCUT;
